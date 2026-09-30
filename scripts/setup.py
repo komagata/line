@@ -60,7 +60,8 @@ def main():
     else:
         raise ValueError('installed, but shell discovery failed; rescan and enable manually (README.md)')
     run(['omarchy', 'plugin', 'enable', PLUGIN])
-    print('Setup complete. Open LINE from the bar.')
+    run([sys.executable, '-B', str(ROOT / 'scripts/launcher'), 'install'])
+    print('Setup complete. Open LINE from the app launcher or the bar.')
 
 
 if __name__ == '__main__':

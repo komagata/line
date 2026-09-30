@@ -7,6 +7,7 @@ done
 export GOCACHE=${GOCACHE:-/tmp/omarchy-line-gocache}
 export GOPROXY=off GOTOOLCHAIN=local
 python3 -B tests/test_setup.py
+python3 -B tests/test_launcher.py
 python3 scripts/validate_manifest.py .
 (
   cd backend

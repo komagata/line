@@ -20,13 +20,14 @@ class SetupTests(unittest.TestCase):
         self.source = self.root / 'source with spaces'
         (self.source / 'scripts').mkdir(parents=True)
         (self.source / 'backend').mkdir()
-        for name in ('setup', 'setup.py', 'build'):
+        for name in ('setup', 'setup.py', 'build', 'launcher'):
             if (ROOT / 'scripts' / name).exists():
                 shutil.copy2(ROOT / 'scripts' / name, self.source / 'scripts' / name)
         self.bin = self.root / 'bin'
         self.bin.mkdir()
         self.log = self.root / 'calls'
         self.env = dict(os.environ, HOME=str(self.root / 'home'), PATH=str(self.bin),
+                        XDG_DATA_HOME=str(self.root / 'data with spaces'),
                         CALLS=str(self.log), GOCACHE=str(self.root / 'gocache'),
                         FAIL='', CATALOG='[]', PLUGINS='[{"id":"io.github.komagata.line"}]')
         self.destination = self.root / 'home/.config/omarchy/plugins/io.github.komagata.line'
@@ -64,6 +65,9 @@ p = Path(sys.argv[1]); p.mkdir(parents=True); (p / 'sentinel').write_text('insta
         return subprocess.run([str(self.source / 'scripts/setup')], env=self.env,
                               text=True, capture_output=True)
 
+    def launcher(self):
+        return self.root / 'data with spaces/applications/io.github.komagata.line.desktop'
+
     def calls(self):
         return [json.loads(line) for line in self.log.read_text().splitlines()] if self.log.exists() else []
 
@@ -77,6 +81,10 @@ p = Path(sys.argv[1]); p.mkdir(parents=True); (p / 'sentinel').write_text('insta
         self.assertIn(['omarchy-shell', 'shell', 'rescanPlugins'], calls)
         self.assertIn(['omarchy', 'plugin', 'enable', 'io.github.komagata.line'], calls)
         self.assertEqual(next(c[1] for c in calls if c[0] == 'build'), str(self.bin / 'go'))
+        self.assertTrue(self.launcher().is_file())
+        self.assertIn('Exec=omarchy-shell shell summon io.github.komagata.line',
+                      self.launcher().read_text())
+        self.assertIn('app launcher', result.stdout)
         self.log.unlink()
         self.assertNotEqual(self.run_setup().returncode, 0)
         self.assertEqual(self.calls(), [])
@@ -114,8 +122,20 @@ shutil.copytree(os.environ['FIXTURE_SOURCE'], 'line')
         self.assertEqual((self.destination / 'bin/line-gui').read_bytes(), b'\x7fELF')
         self.assertEqual((self.destination / 'manifest.json').read_bytes(),
                          (ROOT / 'manifest.json').read_bytes())
+        self.assertTrue(self.launcher().is_file())
         self.assertFalse((self.destination / 'backend').exists())
         self.assertFalse(any(self.destination.parent.glob('.line-install-*')))
+
+    def test_foreign_launcher_failure_keeps_enabled_plugin(self):
+        self.launcher().parent.mkdir(parents=True)
+        self.launcher().write_text('foreign content')
+        result = self.run_setup()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertNotIn('Setup complete', result.stdout)
+        self.assertIn('foreign', result.stderr)
+        self.assertEqual(self.launcher().read_text(), 'foreign content')
+        self.assertTrue(self.destination.exists())
+        self.assertIn(['omarchy', 'plugin', 'enable', 'io.github.komagata.line'], self.calls())
 
     def test_missing_prerequisite_before_download(self):
         (self.bin / 'secret-tool').unlink()
@@ -165,6 +185,7 @@ shutil.copytree(os.environ['FIXTURE_SOURCE'], 'line')
         result = self.run_setup()
         self.assertNotEqual(result.returncode, 0)
         self.assertNotIn('Setup complete', result.stdout)
+        self.assertFalse(self.launcher().exists())
         self.assertTrue(self.destination.exists())
         self.assertNotIn(['omarchy', 'plugin', 'enable', 'io.github.komagata.line'], self.calls())
 
@@ -176,6 +197,7 @@ shutil.copytree(os.environ['FIXTURE_SOURCE'], 'line')
                 result = self.run_setup()
                 self.assertNotEqual(result.returncode, 0)
                 self.assertNotIn('Setup complete', result.stdout)
+                self.assertFalse(self.launcher().exists())
                 if failure in ('go', 'download', 'build', 'install'):
                     self.assertFalse(self.destination.exists())
                 else:

@@ -1,0 +1,120 @@
+#!/usr/bin/env python3
+"""Register or remove the LINE app launcher for the current user."""
+import argparse
+import configparser
+import os
+from pathlib import Path
+import shutil
+import stat
+import subprocess
+import sys
+import tempfile
+
+PLUGIN = 'io.github.komagata.line'
+EXEC = f'omarchy-shell shell summon {PLUGIN}'
+MARKER = 'X-Omarchy-Line-Launcher'
+ENTRY = f'''[Desktop Entry]
+Type=Application
+Name=LINE
+Comment=Open LINE for Omarchy
+Exec={EXEC}
+Icon=internet-chat
+Terminal=false
+StartupNotify=false
+Categories=Network;InstantMessaging;
+Keywords=LINE;line;Chat;Omarchy;
+{MARKER}=true
+'''
+
+
+def launcher_path():
+    data = Path(os.environ.get('XDG_DATA_HOME') or Path.home() / '.local/share')
+    if not data.is_absolute():
+        raise ValueError('XDG_DATA_HOME must be an absolute path')
+    return data / 'applications' / f'{PLUGIN}.desktop'
+
+
+def check_path(path):
+    for item in (path, *path.parents):
+        if item.is_symlink():
+            raise ValueError(f'symlink path refused: {item}')
+        if item != path and item.exists() and not item.is_dir():
+            raise ValueError(f'launcher parent is not a directory: {item}')
+    try:
+        metadata = path.lstat()
+    except FileNotFoundError:
+        return None
+    if not stat.S_ISREG(metadata.st_mode):
+        raise ValueError(f'launcher is not a regular file: {path}')
+    parser = configparser.ConfigParser(interpolation=None)
+    parser.optionxform = str
+    try:
+        parser.read_string(path.read_text(encoding='utf-8'))
+        owned = parser.has_section('Desktop Entry') and (
+            parser.get('Desktop Entry', MARKER, fallback='') == 'true' or
+            parser.get('Desktop Entry', 'Exec', fallback='') == EXEC)
+    except (configparser.Error, UnicodeError):
+        owned = False
+    if not owned:
+        raise ValueError(f'foreign desktop file refused: {path}')
+    # Reading ownership may update atime; compare only identity and content metadata.
+    return (metadata.st_dev, metadata.st_ino, metadata.st_size,
+            metadata.st_mtime_ns, metadata.st_ctime_ns)
+
+
+def refresh_database(directory):
+    tool = shutil.which('update-desktop-database')
+    if tool:
+        try:
+            subprocess.run([tool, str(directory)], check=True, capture_output=True, text=True)
+        except (OSError, subprocess.CalledProcessError) as error:
+            print(f'launcher: warning: desktop entry change completed, but desktop database '
+                  f'refresh failed: {error}', file=sys.stderr)
+
+
+def install(path):
+    previous = check_path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(prefix='.line-launcher-', dir=path.parent,
+                                     mode='w', encoding='utf-8', delete=False) as stream:
+        temporary = Path(stream.name)
+        try:
+            stream.write(ENTRY)
+            stream.flush()
+            os.fsync(stream.fileno())
+            os.fchmod(stream.fileno(), 0o644)
+            # Recheck ownership after staging; never replace a newly appeared file.
+            current = check_path(path)
+            if previous != current:
+                raise ValueError(f'launcher changed during registration: {path}')
+            if previous is None:
+                os.link(temporary, path)
+            else:
+                os.replace(temporary, path)
+        finally:
+            temporary.unlink(missing_ok=True)
+    print(f'Registered LINE app launcher: {path}')
+    refresh_database(path.parent)
+
+
+def remove(path):
+    if check_path(path) is None:
+        print(f'LINE app launcher is already absent: {path}')
+        return
+    path.unlink()
+    print(f'Removed LINE app launcher: {path}')
+    refresh_database(path.parent)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('command', choices=('install', 'remove'))
+    args = parser.parse_args()
+    try:
+        (install if args.command == 'install' else remove)(launcher_path())
+    except (OSError, ValueError) as error:
+        parser.exit(1, f'launcher: {error}\n')
+
+
+if __name__ == '__main__':
+    main()
