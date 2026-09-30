@@ -1,39 +1,39 @@
 # LINE for Omarchy
 
-Omarchy 4 QuattroでLINEのチャット・返信・添付・スタンプを使う、QMLとGoの開発中プラグインです。LINE公式の製品ではありません。
+A work-in-progress QML and Go plugin for using LINE chats, replies, attachments, and stickers in Omarchy 4 Quattro. This is not an official LINE product.
 
-## インストール
+## Installation
 
-必要なものを用意してから、次の1行を実行してください。
+After preparing the prerequisites, run:
 
 ```bash
 git clone https://github.com/komagata/line.git && cd line && ./scripts/setup
 ```
 
-- Linux、Omarchy 4 Quattro / Quickshell、Qt Quick Controls・Dialogs
-- ソースの取得・ビルド用: git、Go 1.26以降、Python 3
-- 認証保存用: libsecretの `/usr/bin/secret-tool` とアンロック済みのSecret Service
-- 通知を使う場合: `/usr/bin/notify-send`（Arch Linuxでは `libnotify`）
+- Linux, Omarchy 4 Quattro / Quickshell, Qt Quick Controls and Dialogs
+- For fetching and building the source: git, Go 1.26 or later, Python 3
+- For storing authentication: libsecret's `/usr/bin/secret-tool` and an unlocked Secret Service
+- For notifications: `/usr/bin/notify-send` (on Arch Linux, `libnotify`)
 
-Arch Linuxのパッケージ名は `git`、`go`、`python`、`libsecret` です。setupはシステムパッケージをインストールしません。
+On Arch Linux, the package names are `git`, `go`, `python`, and `libsecret`. setup does not install system packages.
 
-setupは前提と配置先を確認し、固定されたGoモジュールをダウンロードしてビルドします。検証済みの配布物だけを `~/.config/omarchy/plugins/io.github.komagata.line` に配置し、再検出・有効化します。既存の配置先や同じIDのプラグインがあれば、ビルド前に停止します。シェルの再起動やログインは行いません。
+setup checks the prerequisites and destination, downloads pinned Go modules, and builds the plugin. It installs only the verified build artifact to `~/.config/omarchy/plugins/io.github.komagata.line`, then rescans and enables it. If the destination already exists or a plugin with the same ID is present, setup stops before building. It does not restart the shell or sign you in.
 
-ソース取得だけでは `bin/line-gui` が生成されないため、標準の `omarchy plugin add` では導入できません。実行時のダウンロード・ビルドはなく、Node、Python、qrencode、外部の `line` CLIも不要です。
+Cloning the source alone does not create `bin/line-gui`, so the standard `omarchy plugin add` command cannot install it. There are no runtime downloads or builds, and Node, Python, qrencode, and an external `line` CLI are not needed.
 
-## 使い方
+## Usage
 
-バーのLINEアイコンから開き、設定で再読み込み・QRログインを行います。送信はEnter、改行はShift+Enterです。トークは最大500件、履歴は直近100件。会話と下書きはメモリ内に保持し、サービス終了で消えます。送信結果が不明な場合は自動再送しません。
+Open the plugin from the LINE icon in the bar, then reload or sign in with a QR code in Settings. Press Enter to send and Shift+Enter for a line break. Chats are limited to 500 items, and history to the most recent 100. Conversations and drafts are held in memory and are cleared when the service stops. If the result of a send is unknown, the message is not automatically resent.
 
-ローカルのGo版では保存済みアカウントのトーク・アイコン・所有スタンプと受信接続を確認しています。実QRログインのやり直し、実送信・相手への配達は未検証です。
+With the local Go version, chats, icons, owned stickers, and the incoming connection have been checked using a saved account. Repeating a real QR login, sending real messages, and delivery to recipients have not been verified.
 
-![架空の会話を表示した実画面のスクリーンショット（デモ導線の削除前に撮影）。](preview.png)
+![Screenshot of the running app showing a fictional conversation (captured before the demo entry point was removed).](preview.png)
 
-画像の名前・会話・アイコンは架空のものです。通常の画面にはデモへ切り替えるボタンはありません。
+The names, conversation, and icons in the image are fictional. The regular UI has no button for switching to the demo.
 
-## 更新・削除
+## Updating and removal
 
-配置するのはビルド済みのコピーです。更新は取得した `line` ディレクトリで行います。標準のGit管理プラグイン向け更新操作は使いません。
+The installed plugin is a built copy. Update it from the cloned `line` directory; do not use the update operation intended for Git-managed plugins.
 
 ```bash
 git pull --ff-only
@@ -45,7 +45,7 @@ omarchy-shell shell rescanPlugins
 omarchy plugin enable io.github.komagata.line
 ```
 
-旧版は検出対象外の `~/.config/omarchy/plugins-backups/` に残り、置き換えに失敗すれば元へ戻ります。戻す場合は無効化してから、インストーラーが出力したバックアップを指定します。
+The previous version is kept in `~/.config/omarchy/plugins-backups/`, outside the plugin discovery path, and is restored if replacement fails. To roll back, disable the plugin and specify the backup path printed by the installer.
 
 ```bash
 ./scripts/install "$HOME/.config/omarchy/plugins/io.github.komagata.line" --rollback "$HOME/.config/omarchy/plugins-backups/io.github.komagata.line.backup-..."
@@ -53,18 +53,20 @@ omarchy-shell shell rescanPlugins
 omarchy plugin enable io.github.komagata.line
 ```
 
-setupが配置後の再検出・有効化で失敗した場合は、原因を直して上のrescan・enableを実行してください。再度setupを実行しても既存ファイルは置き換えません。
+If setup fails while rescanning or enabling the plugin after installation, fix the cause and run the rescan and enable commands above. Running setup again will not replace existing files.
 
-削除は次の操作です。認証情報と旧CLI、バックアップは残ります。バックアップの削除は内容確認後に手動で行ってください。
+To remove the plugin, run:
 
 ```bash
 omarchy plugin disable io.github.komagata.line
 omarchy plugin remove io.github.komagata.line
 ```
 
-## 開発・出典
+Authentication data, the old CLI, and backups are left in place. Review the backup contents before deleting them manually.
 
-テストには追加で `qmltestrunner` / QtTestが必要です。モジュール取得後のビルド・テストはオフラインで実行し、Goキャッシュはソースの外に置きます。
+## Development and provenance
+
+Tests also require `qmltestrunner` / QtTest. After downloading modules, builds and tests run offline, with the Go cache stored outside the source tree.
 
 ```bash
 export GOCACHE=/tmp/omarchy-line-gocache
@@ -73,12 +75,12 @@ export GOCACHE=/tmp/omarchy-line-gocache
 omarchy plugin validate build/plugin
 ```
 
-開発時の画面確認には、架空データを使うデモIPCを残しています。ログインや実送信は行いません。デモを終了して通常の利用に戻る場合は、プラグインを無効化・有効化してサービスを起動し直してください。
+For development UI checks, a demo IPC using fictional data is available. It does not sign in or send real messages. To exit the demo and return to normal use, disable and re-enable the plugin to restart the service.
 
 ```bash
 omarchy-shell shell summon io.github.komagata.line '{"demo":true}'
 ```
 
-`build/plugin/` にはQML、manifest、ライセンス・出典、静的リンクした `bin/line-gui` が入ります。ビルドは `CGO_ENABLED=0`、`-trimpath`、`-buildvcs=false` を使います。テストはGoのrace・vet・暗号テスト、QtTest、メッセージ描画のローカルHTTP検証を含みます。
+`build/plugin/` contains QML, the manifest, licenses and provenance, and the statically linked `bin/line-gui`. The build uses `CGO_ENABLED=0`, `-trimpath`, and `-buildvcs=false`. Tests include Go race, vet, and crypto tests, QtTest, and local HTTP verification of message rendering.
 
-[ソースと依存の出典](docs/go-source-provenance.txt)を参照してください。上流、生成コード・データ、Go標準ライブラリと実行時依存のライセンス文書を配布物のNOTICEに含めます。
+See [source and dependency provenance](docs/go-source-provenance.txt). License documents for upstream sources, generated code and data, the Go standard library, and runtime dependencies are included in the distributed artifact's NOTICE.
