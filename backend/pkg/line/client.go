@@ -1,0 +1,1078 @@
+package line
+
+import (
+	"bytes"
+	"context"
+	"crypto/rand"
+	"encoding/base64"
+	"encoding/binary"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"log"
+	"net/http"
+	"net/url"
+	"strings"
+	"sync"
+	"time"
+
+	gen "github.com/kongesque/line-cli/pkg"
+	"github.com/kongesque/line-cli/pkg/line/password"
+	"github.com/kongesque/line-cli/pkg/line/secret"
+)
+
+const (
+	BaseURL               = "https://line-chrome-gw.line-apps.com/api/talk/thrift/Talk"
+	ShopBaseURL           = "https://line-chrome-gw.line-apps.com/api/shop/thrift/ShopService"
+	ExtensionVersion      = "3.7.2"
+	UserAgent             = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"
+	rpcClientTimeout      = 30 * time.Second
+	obsMaxRetries         = 5
+	lineApplicationHeader = "CHROMEOS\t" + ExtensionVersion + "\tChrome_OS\t"
+	albumPreviewChannelID = "1341209850"
+	albumPreviewTID       = "f482x482"
+)
+
+var (
+	obsRetryDelay = 2 * time.Second
+
+	ErrOBSObjectNotFound     = errors.New("LINE OBS object not found")
+	ErrOBSEncodingIncomplete = errors.New("LINE OBS object encoding incomplete")
+	ErrOBSObjectValidation   = errors.New("LINE OBS object validation failed")
+	ErrOBSSizeLimit          = errors.New("OBS object exceeds download size limit")
+)
+
+type Client struct {
+	HTTPClient  *http.Client
+	OBSClient   *http.Client
+	AccessToken string
+
+	channelTokenMu    sync.Mutex
+	channelTokenCache map[string]cachedChannelAccessToken
+}
+
+type OBSDownloadOptions struct {
+	// MaxBytes bounds the downloaded object when positive; zero leaves the object size unbounded.
+	MaxBytes int64
+	TID      string
+	OBSPop   string
+}
+
+type cachedChannelAccessToken struct {
+	token     string
+	expiresAt time.Time
+}
+
+func NewClient(token string) *Client {
+	return &Client{
+		HTTPClient:  &http.Client{Timeout: rpcClientTimeout},
+		OBSClient:   &http.Client{},
+		AccessToken: token,
+	}
+}
+
+func (c *Client) obsHTTPClient() *http.Client {
+	if c.OBSClient != nil {
+		return c.OBSClient
+	}
+	if c.HTTPClient != nil {
+		return c.HTTPClient
+	}
+	return &http.Client{}
+}
+
+func (c *Client) Login(email, pass, certificate string) (*LoginResult, error) {
+	// 1. Get RSA Key Info
+	rsaKey, err := c.GetRSAKeyInfo()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get RSA key info: %w", err)
+	}
+
+	// 2. Encrypt Password
+	encryptedPass, err := password.EncryptPassword(email, pass, rsaKey.SessionKey, rsaKey.NValue, rsaKey.EValue)
+	if err != nil {
+		return nil, fmt.Errorf("failed to encrypt password: %w", err)
+	}
+
+	// 3. Generate E2EE Secret
+	secretRes, err := secret.GenerateSecret()
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate e2ee secret: %w", err)
+	}
+
+	// 4. LoginV2
+	// Identifier is KeyName when using RSA; certificate allows skipping PIN verification
+	noE2EE := false
+	respBytes, err := c.LoginV2(rsaKey.KeyName, encryptedPass, certificate, secretRes.Secret)
+	if err != nil && isLoginNotSupported(err) {
+		// LSOFF: E2EE login not supported, retry without secret using fresh RSA key
+		log.Printf("[LINE] E2EE login not supported, retrying without secret (LSOFF)")
+		noE2EE = true
+		rsaKey2, err2 := c.GetRSAKeyInfo()
+		if err2 != nil {
+			return nil, fmt.Errorf("failed to get RSA key info for LSOFF retry: %w", err2)
+		}
+		encryptedPass2, err2 := password.EncryptPassword(email, pass, rsaKey2.SessionKey, rsaKey2.NValue, rsaKey2.EValue)
+		if err2 != nil {
+			return nil, fmt.Errorf("failed to encrypt password for LSOFF retry: %w", err2)
+		}
+		respBytes, err = c.LoginV2WithType(0, rsaKey2.KeyName, encryptedPass2, "", "")
+	}
+	if err != nil {
+		return nil, fmt.Errorf("login failed: %w", err)
+	}
+
+	var wrapper struct {
+		Code    int         `json:"code"`
+		Message string      `json:"message"`
+		Data    LoginResult `json:"data"`
+	}
+	if err := json.Unmarshal(respBytes, &wrapper); err != nil {
+		return nil, fmt.Errorf("failed to parse login response: %w", err)
+	}
+	if wrapper.Code != 0 {
+		return nil, fmt.Errorf("loginV2 failed: %s (code %d)", wrapper.Message, wrapper.Code)
+	}
+	res := wrapper.Data
+	if res.PinCode != "" {
+		res.Pin = res.PinCode
+	} else {
+		res.Pin = secretRes.Pin // Store locally for display
+	}
+
+	res.NoE2EE = noE2EE
+
+	// Prefer the V3 token if present, otherwise fall back to legacy authToken.
+	// LINE returns only the V3 token when re-authenticating with a stored
+	// certificate, so callers that key on AuthToken would otherwise fall into
+	// the PIN flow despite the login succeeding.
+	if res.TokenV3IssueResult != nil && res.TokenV3IssueResult.AccessToken != "" {
+		res.AuthToken = res.TokenV3IssueResult.AccessToken
+		c.AccessToken = res.TokenV3IssueResult.AccessToken
+	} else if res.AuthToken != "" {
+		c.AccessToken = res.AuthToken
+	}
+	return &res, nil
+}
+
+// ClearLoginKey releases the email flow's ephemeral key after completion or
+// failure. Call only after keychain export. An active QR lease cannot be cleared.
+func (c *Client) ClearLoginKey() error {
+	r, err := gen.GetRunner()
+	if err != nil {
+		return err
+	}
+	return r.ClearLoginKey()
+}
+
+func isLoginNotSupported(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "\"code\":89") || strings.Contains(msg, "not supported")
+}
+
+func (c *Client) WaitForLogin(verifier string, noE2EE bool) (*LoginResult, error) {
+	if noE2EE {
+		return c.waitForLoginJQ(verifier)
+	}
+	return c.waitForLoginLF1(verifier)
+}
+
+// waitForLoginJQ polls the JQ endpoint for LSOFF accounts (no E2EE).
+func (c *Client) waitForLoginJQ(verifier string) (*LoginResult, error) {
+	url := "https://line-chrome-gw.line-apps.com/api/talk/long-polling/JQ"
+
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Set("User-Agent", UserAgent)
+	req.Header.Set("x-line-chrome-version", ExtensionVersion)
+	req.Header.Set("x-lal", "en_US")
+	req.Header["X-Line-Session-ID"] = []string{verifier}
+	req.Header["X-LST"] = []string{"180000"}
+
+	hmacRunner, err := gen.GetRunner()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get HMAC runner: %w", err)
+	}
+
+	path := strings.Split(url, "https://line-chrome-gw.line-apps.com")[1]
+	signature, err := hmacRunner.GetSignature(path, "", c.AccessToken)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate HMAC for polling: %w", err)
+	}
+	req.Header.Set("x-hmac", signature)
+
+	pollClient := &http.Client{Timeout: 200 * time.Second}
+	resp, err := pollClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+
+	// JQ response: {"data":{"result":{"verifier":"...","authPhase":"QRCODE_VERIFIED",...}}}
+	var wrapper struct {
+		Code    int    `json:"code"`
+		Message string `json:"message"`
+		Data    struct {
+			Result struct {
+				Verifier  string `json:"verifier"`
+				AuthPhase string `json:"authPhase"`
+			} `json:"result"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &wrapper); err != nil {
+		return nil, fmt.Errorf("failed to parse JQ polling response: %w", err)
+	}
+
+	if wrapper.Data.Result.AuthPhase != "QRCODE_VERIFIED" {
+		return nil, fmt.Errorf("JQ polling: unexpected authPhase %q", wrapper.Data.Result.AuthPhase)
+	}
+
+	log.Printf("[LINE] JQ poll verified, finalizing non-E2EE login")
+	res, err := c.LoginV2WithVerifier(verifier)
+	if err != nil {
+		return nil, fmt.Errorf("non-E2EE login finalization failed: %w", err)
+	}
+	res.NoE2EE = true
+	return res, nil
+}
+
+// waitForLoginLF1 polls the LF1 endpoint for LSON accounts (E2EE).
+func (c *Client) waitForLoginLF1(verifier string) (*LoginResult, error) {
+	url := "https://line-chrome-gw.line-apps.com/api/talk/long-polling/LF1"
+
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Set("User-Agent", UserAgent)
+	req.Header.Set("x-line-chrome-version", ExtensionVersion)
+	req.Header.Set("x-lal", "en_US")
+	req.Header["X-Line-Session-ID"] = []string{verifier}
+	req.Header["X-LST"] = []string{"110000"}
+
+	hmacRunner, err := gen.GetRunner()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get HMAC runner: %w", err)
+	}
+
+	path := strings.Split(url, "https://line-chrome-gw.line-apps.com")[1]
+	signature, err := hmacRunner.GetSignature(path, "", c.AccessToken)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate HMAC for polling: %w", err)
+	}
+	req.Header.Set("x-hmac", signature)
+
+	pollClient := &http.Client{Timeout: 120 * time.Second}
+	resp, err := pollClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+
+	var wrapper struct {
+		Code    int                `json:"code"`
+		Message string             `json:"message"`
+		Data    LoginPollingResult `json:"data"`
+	}
+	if err := json.Unmarshal(body, &wrapper); err != nil {
+		return nil, fmt.Errorf("failed to parse LF1 polling response: %w", err)
+	}
+
+	meta := wrapper.Data.Result.Metadata
+
+	// LSON path: confirm E2EE handshake first, then finalize with verifier
+	if meta.EncryptedKeyChain != "" && meta.PublicKey != "" {
+		if err := c.ConfirmE2EELogin(verifier, meta.PublicKey, meta.EncryptedKeyChain); err != nil {
+			log.Printf("[LINE] ConfirmE2EELogin failed: %v", err)
+		} else {
+			if res, err := c.LoginV2WithVerifier(verifier); err != nil {
+				log.Printf("[LINE] LoginV2WithVerifier failed: %v", err)
+			} else {
+				res.EncryptedKeyChain = meta.EncryptedKeyChain
+				res.E2EEPublicKey = meta.PublicKey
+				res.E2EEVersion = meta.E2EEVersion
+				res.E2EEKeyID = meta.KeyID
+				return res, nil
+			}
+		}
+	}
+
+	// Direct token in LF1 response (some login flows)
+	if meta.AuthToken != "" || meta.Certificate != "" {
+		return &LoginResult{
+			AuthToken:   meta.AuthToken,
+			Certificate: meta.Certificate,
+		}, nil
+	}
+
+	// Fallback: try finalizing with verifier directly
+	log.Printf("[LINE] No E2EE key chain in LF1 response, attempting direct login")
+	if res, err := c.LoginV2WithVerifier(verifier); err != nil {
+		return nil, fmt.Errorf("login finalization failed: %w", err)
+	} else {
+		return res, nil
+	}
+}
+
+func (c *Client) GetRSAKeyInfo() (*RSAKeyInfo, error) {
+	// callRPC args marshals to [1]
+	resp, err := c.callRPC("TalkService", "getRSAKeyInfo", 1)
+	if err != nil {
+		return nil, err
+	}
+	var wrapper struct {
+		Code    int        `json:"code"`
+		Message string     `json:"message"`
+		Data    RSAKeyInfo `json:"data"`
+	}
+	if err := json.Unmarshal(resp, &wrapper); err != nil {
+		return nil, err
+	}
+	return &wrapper.Data, nil
+}
+
+func (c *Client) callRPC(service, method string, args ...interface{}) ([]byte, error) {
+	return c.callRPCContext(context.Background(), service, method, args...)
+}
+
+func (c *Client) callRPCContext(ctx context.Context, service, method string, args ...interface{}) ([]byte, error) {
+	return c.callRPCWithBaseURLContext(ctx, BaseURL, service, method, args...)
+}
+
+func (c *Client) callShopRPC(service, method string, args ...interface{}) ([]byte, error) {
+	return c.callRPCWithBaseURL(ShopBaseURL, service, method, args...)
+}
+
+func (c *Client) callRPCWithBaseURL(baseURL, service, method string, args ...interface{}) ([]byte, error) {
+	return c.callRPCWithBaseURLContext(context.Background(), baseURL, service, method, args...)
+}
+
+func (c *Client) callRPCWithBaseURLContext(ctx context.Context, baseURL, service, method string, args ...interface{}) ([]byte, error) {
+	url := fmt.Sprintf("%s/%s/%s", baseURL, service, method)
+
+	var bodyBytes []byte
+	if len(args) == 0 {
+		bodyBytes = []byte("[]")
+	} else {
+		var err error
+		bodyBytes, err = json.Marshal(args)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal args: %w", err)
+		}
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(bodyBytes))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", UserAgent)
+	req.Header.Set("x-line-chrome-version", ExtensionVersion)
+	req.Header.Set("x-line-application", "CHROMEOS\t3.7.2\tChrome_OS")
+	req.Header.Set("x-lal", "en_US")
+	if c.AccessToken != "" {
+		req.Header.Set("x-line-access", c.AccessToken)
+		req.Header.Set("Cookie", fmt.Sprintf("lct=%s", c.AccessToken))
+	}
+
+	hmacRunner, err := gen.GetRunner()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get HMAC runner: %w", err)
+	}
+
+	signature, err := hmacRunner.GetSignature(strings.Split(url, "https://line-chrome-gw.line-apps.com")[1], string(bodyBytes), c.AccessToken)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate HMAC signature: %w", err)
+	}
+	req.Header.Set("x-hmac", signature)
+
+	resp, err := c.HTTPClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	var responseBody io.Reader = resp.Body
+	if baseURL == ShopBaseURL && method == "getOwnedProductSummaries" {
+		responseBody = io.LimitReader(resp.Body, 2*1024*1024+1)
+	}
+	respBody, err := io.ReadAll(responseBody)
+	if baseURL == ShopBaseURL && method == "getOwnedProductSummaries" && len(respBody) > 2*1024*1024 {
+		return nil, errors.New("owned-sticker response exceeds limit")
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read LINE response: %w", err)
+	}
+	if err := responseError(resp.StatusCode, respBody); err != nil && (resp.StatusCode != 200 || IsAuthError(err)) {
+		return nil, err
+	}
+	// Non-authentication envelopes retain the method-specific capability handling.
+	return respBody, nil
+}
+
+// ConfirmE2EELogin completes the E2EE handshake after LF1 by hashing the encrypted key
+// chain and posting it alongside the verifier.
+func (c *Client) ConfirmE2EELogin(verifier, serverPublicKeyB64, encryptedKeyChainB64 string) error {
+	runner, err := gen.GetRunner()
+	if err != nil {
+		return fmt.Errorf("failed to init runner: %w", err)
+	}
+
+	hash, err := runner.GenerateConfirmHash(serverPublicKeyB64, encryptedKeyChainB64)
+	if err != nil {
+		return fmt.Errorf("failed to derive confirm hash: %w", err)
+	}
+
+	bodyBytes, err := json.Marshal([]string{verifier, hash})
+	if err != nil {
+		return fmt.Errorf("failed to marshal confirm payload: %w", err)
+	}
+
+	url := "https://line-chrome-gw.line-apps.com/api/talk/thrift/Talk/AuthService/confirmE2EELogin"
+	respBytes, err := c.postWithHMAC(url, bodyBytes)
+	if err != nil {
+		return err
+	}
+
+	var wrapper struct {
+		Code    int    `json:"code"`
+		Message string `json:"message"`
+		Data    string `json:"data"`
+	}
+	if err := json.Unmarshal(respBytes, &wrapper); err != nil {
+		return fmt.Errorf("failed to parse confirmE2EELogin response: %w", err)
+	}
+	if wrapper.Code != 0 {
+		return fmt.Errorf("confirmE2EELogin failed: %s", wrapper.Message)
+	}
+
+	return nil
+}
+
+// postWithHMAC is a small helper for non-standard RPC endpoints that still expect
+// the same headers and HMAC signature as the Talk endpoints.
+func (c *Client) postWithHMAC(fullURL string, body []byte) ([]byte, error) {
+	return c.postWithHMACContext(context.Background(), fullURL, body)
+}
+
+func (c *Client) postWithHMACContext(ctx context.Context, fullURL string, body []byte) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, "POST", fullURL, bytes.NewBuffer(body))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", UserAgent)
+	req.Header.Set("x-line-chrome-version", ExtensionVersion)
+	req.Header.Set("x-line-application", "CHROMEOS\t3.7.2\tChrome_OS")
+	req.Header.Set("x-lal", "en_US")
+	if c.AccessToken != "" {
+		req.Header.Set("x-line-access", c.AccessToken)
+		req.Header.Set("Cookie", fmt.Sprintf("lct=%s", c.AccessToken))
+	}
+
+	hmacRunner, err := gen.GetRunner()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get HMAC runner: %w", err)
+	}
+
+	path := strings.Split(fullURL, "https://line-chrome-gw.line-apps.com")[1]
+	signature, err := hmacRunner.GetSignature(path, string(body), c.AccessToken)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate HMAC signature: %w", err)
+	}
+	req.Header.Set("x-hmac", signature)
+
+	resp, err := c.HTTPClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read LINE response: %w", err)
+	}
+	if err := responseError(resp.StatusCode, respBody); err != nil {
+		return nil, err
+	}
+	return respBody, nil
+}
+
+func (c *Client) RefreshAccessToken(refreshToken string) (*TokenV3IssueResult, error) {
+	return c.RefreshAccessTokenContext(context.Background(), refreshToken, 0)
+}
+
+func (c *Client) RefreshAccessTokenContext(ctx context.Context, refreshToken string, retryCount int) (*TokenV3IssueResult, error) {
+	url := "https://line-chrome-gw.line-apps.com/api/auth/tokenRefresh"
+
+	reqBody := RefreshAccessTokenRequest{
+		RefreshToken: refreshToken,
+		RetryCount:   retryCount,
+	}
+
+	bodyBytes, err := json.Marshal(reqBody)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal refresh request: %w", err)
+	}
+
+	respBytes, err := c.postWithHMACContext(ctx, url, bodyBytes)
+	if err != nil {
+		return nil, err
+	}
+
+	var res TokenV3IssueResult
+	if err := json.Unmarshal(respBytes, &res); err != nil {
+		return nil, fmt.Errorf("failed to parse refresh response: %w", err)
+	}
+
+	// Treat an empty access token as a refresh failure. LINE occasionally
+	// returns HTTP 200 with a non-token body (e.g. an error JSON that doesn't
+	// match TokenV3IssueResult), in which case the unmarshal silently yields a
+	// zeroed struct. Without this guard the caller would clear the in-memory
+	// access token and the client would silently go into a "not logged in"
+	// state on the next API call.
+	if res.AccessToken == "" {
+		return nil, errors.New("refresh response missing access token")
+	}
+
+	// The session owner publishes credentials only after persistence.
+
+	return &res, nil
+}
+
+const OBSBaseURL = "https://obs.line-apps.com"
+
+// obsTypeFromSID maps the OBS SID to the correct "type" field in X-Obs-Params.
+// Encrypted endpoints (emi/emv/emf/ema) expect "file" since the data is opaque binary.
+// The plain "m" endpoint defaults to "image" — use UploadOBSPlain for other types.
+func obsTypeFromSID(sid string) string {
+	if sid == "m" {
+		return "image"
+	}
+	return "file"
+}
+
+// UploadOBSPlain uploads plain (non-E2EE) media to a specific OID via the "m" endpoint.
+// obsType should be "image", "video", "audio", or "file".
+func (c *Client) UploadOBSPlain(data []byte, oid string, obsType string) error {
+	obsToken, err := c.AcquireEncryptedAccessToken()
+	if err != nil {
+		return fmt.Errorf("failed to acquire OBS token: %w", err)
+	}
+
+	url := fmt.Sprintf("%s/r/talk/m/%s", OBSBaseURL, oid)
+
+	req, err := http.NewRequest("POST", url, bytes.NewReader(data))
+	if err != nil {
+		return fmt.Errorf("failed to create OBS request: %w", err)
+	}
+
+	obsParams := map[string]string{
+		"ver":  "2.0",
+		"name": fmt.Sprintf("%d", time.Now().UnixMilli()),
+		"type": obsType,
+	}
+	obsParamsJSON, _ := json.Marshal(obsParams)
+	obsParamsB64 := base64.StdEncoding.EncodeToString(obsParamsJSON)
+
+	req.Header.Set("User-Agent", UserAgent)
+	req.Header.Set("x-line-application", "CHROMEOS\t3.7.2\tChrome_OS")
+	req.Header.Set("x-lal", "en_US")
+	req.Header.Set("Content-Type", "application/octet-stream")
+	req.Header.Set("X-Obs-Params", obsParamsB64)
+	req.Header.Set("x-line-access", obsToken)
+
+	resp, err := c.obsHTTPClient().Do(req)
+	if err != nil {
+		return fmt.Errorf("OBS upload request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+
+	if resp.StatusCode != 200 && resp.StatusCode != 201 {
+		return fmt.Errorf("OBS upload failed (%d): %s", resp.StatusCode, string(body))
+	}
+
+	return nil
+}
+
+// UploadOBS uploads media to LINE's Object Storage and returns the Object ID (OID).
+// Default uses "emi" SID for images
+func (c *Client) UploadOBS(data []byte) (string, error) {
+	return c.UploadOBSWithSID(data, "emi")
+}
+
+// SID: emi (images), emv (videos), ema (audio), emf (files)
+func (c *Client) UploadOBSWithSID(data []byte, sid string) (string, error) {
+	// First, acquire the OBS-specific encrypted access token
+	obsToken, err := c.AcquireEncryptedAccessToken()
+	if err != nil {
+		return "", fmt.Errorf("failed to acquire OBS token: %w", err)
+	}
+
+	// Generate a random Request ID (UUID-like)
+	reqIDBytes := make([]byte, 16)
+	if _, err := rand.Read(reqIDBytes); err != nil {
+		return "", fmt.Errorf("failed to generate reqID: %w", err)
+	}
+	reqID := fmt.Sprintf("%x-%x-%x-%x-%x", reqIDBytes[0:4], reqIDBytes[4:6], reqIDBytes[6:8], reqIDBytes[8:10], reqIDBytes[10:])
+
+	url := fmt.Sprintf("%s/r/talk/%s/reqid-%s", OBSBaseURL, sid, reqID)
+
+	req, err := http.NewRequest("POST", url, bytes.NewReader(data))
+	if err != nil {
+		return "", fmt.Errorf("failed to create OBS request: %w", err)
+	}
+
+	// Construct X-Obs-Params header (base64 encoded JSON)
+	obsParams := map[string]string{
+		"ver":  "2.0",
+		"name": fmt.Sprintf("%d", time.Now().UnixMilli()),
+		"type": obsTypeFromSID(sid),
+	}
+	obsParamsJSON, _ := json.Marshal(obsParams)
+	obsParamsB64 := base64.StdEncoding.EncodeToString(obsParamsJSON)
+
+	req.Header.Set("User-Agent", UserAgent)
+	req.Header.Set("x-line-application", "CHROMEOS\t3.7.2\tChrome_OS")
+	req.Header.Set("x-lal", "en_US")
+	// OBS expects application/octet-stream for binary uploads
+	req.Header.Set("Content-Type", "application/octet-stream")
+	req.Header.Set("X-Obs-Params", obsParamsB64)
+
+	// Use the OBS-specific access token
+	req.Header.Set("x-line-access", obsToken)
+
+	resp, err := c.obsHTTPClient().Do(req)
+	if err != nil {
+		return "", fmt.Errorf("OBS upload request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+
+	if resp.StatusCode != 200 && resp.StatusCode != 201 {
+		return "", fmt.Errorf("OBS upload failed (%d): %s", resp.StatusCode, string(body))
+	}
+
+	// The OID is typically returned in the x-obs-oid header
+	oid := resp.Header.Get("x-obs-oid")
+	if oid == "" {
+		// Fallback: checks if reqID is used as OID or if body contains it (rare for this endpoint)
+		return "", fmt.Errorf("OBS upload succeeded but no x-obs-oid header returned")
+	}
+
+	return oid, nil
+}
+
+// UploadOBSWithOID uploads data to a specific OID (used for preview/thumbnail uploads)
+func (c *Client) UploadOBSWithOID(data []byte, oid string) error {
+	return c.UploadOBSWithOIDAndSID(data, oid, "emi")
+}
+
+// UploadOBSWithOIDAndSID uploads data to a specific OID with a specific SID
+func (c *Client) UploadOBSWithOIDAndSID(data []byte, oid string, sid string) error {
+	// First, acquire the OBS-specific encrypted access token
+	obsToken, err := c.AcquireEncryptedAccessToken()
+	if err != nil {
+		return fmt.Errorf("failed to acquire OBS token: %w", err)
+	}
+
+	url := fmt.Sprintf("%s/r/talk/%s/%s", OBSBaseURL, sid, oid)
+
+	req, err := http.NewRequest("POST", url, bytes.NewReader(data))
+	if err != nil {
+		return fmt.Errorf("failed to create OBS request: %w", err)
+	}
+
+	// Construct X-Obs-Params header (base64 encoded JSON)
+	obsParams := map[string]string{
+		"ver":  "2.0",
+		"name": fmt.Sprintf("%d", time.Now().UnixMilli()),
+		"type": obsTypeFromSID(sid),
+	}
+	obsParamsJSON, _ := json.Marshal(obsParams)
+	obsParamsB64 := base64.StdEncoding.EncodeToString(obsParamsJSON)
+
+	req.Header.Set("User-Agent", UserAgent)
+	req.Header.Set("x-line-application", "CHROMEOS\t3.7.2\tChrome_OS")
+	req.Header.Set("x-lal", "en_US")
+	req.Header.Set("Content-Type", "application/octet-stream")
+	req.Header.Set("X-Obs-Params", obsParamsB64)
+	req.Header.Set("x-line-access", obsToken)
+
+	resp, err := c.obsHTTPClient().Do(req)
+	if err != nil {
+		return fmt.Errorf("OBS upload request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+
+	if resp.StatusCode != 200 && resp.StatusCode != 201 {
+		return fmt.Errorf("OBS upload failed (%d): %s", resp.StatusCode, string(body))
+	}
+
+	return nil
+}
+
+// DownloadOBS retrieves media from LINE's Object Storage using the OID.
+func (c *Client) DownloadOBS(ctx context.Context, oid string, messageID string) ([]byte, error) {
+	return c.DownloadOBSWithSID(ctx, oid, messageID, "emi")
+}
+
+func (c *Client) DownloadOBSWithOptions(ctx context.Context, oid string, messageID string, opts OBSDownloadOptions) ([]byte, error) {
+	return c.DownloadOBSWithSIDOptions(ctx, oid, messageID, "emi", opts)
+}
+
+func (c *Client) DownloadOBSWithSID(ctx context.Context, oid string, messageID string, sid string) ([]byte, error) {
+	return c.DownloadOBSWithSIDOptions(ctx, oid, messageID, sid, OBSDownloadOptions{})
+}
+
+func (c *Client) DownloadOBSWithSIDOptions(ctx context.Context, oid string, messageID string, sid string, opts OBSDownloadOptions) ([]byte, error) {
+	return c.downloadOBSWithServiceAndSIDOptions(ctx, "talk", sid, oid, messageID, opts)
+}
+
+// DownloadOBSPublicResource downloads a public OBS resource referenced by
+// message content metadata. LINE Chrome uses DOWNLOAD_URL directly and skips
+// object_info.obs and the private OBS authorization header mapper.
+func (c *Client) DownloadOBSPublicResource(ctx context.Context, resourcePath string) ([]byte, error) {
+	parsedPath, err := url.Parse(resourcePath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse public OBS resource path: %w", err)
+	}
+	if parsedPath.IsAbs() || parsedPath.Host != "" || !strings.HasPrefix(parsedPath.Path, "/") {
+		return nil, errors.New("public OBS resource must be an absolute path")
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, OBSBaseURL+resourcePath, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create public OBS resource request: %w", err)
+	}
+	req.Header.Set("User-Agent", UserAgent)
+
+	resp, err := c.obsHTTPClient().Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("public OBS resource request failed: %w", err)
+	}
+	body, readErr := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if readErr != nil {
+		return nil, fmt.Errorf("failed to read public OBS resource response: %w", readErr)
+	}
+	switch resp.StatusCode {
+	case http.StatusOK:
+		return body, nil
+	case http.StatusAccepted:
+		return nil, ErrOBSEncodingIncomplete
+	case http.StatusNotFound:
+		return nil, ErrOBSObjectNotFound
+	default:
+		return nil, fmt.Errorf("public OBS resource download failed (%d): %s", resp.StatusCode, string(body))
+	}
+}
+
+// DownloadOBSResource retrieves a non-talk resource using the service, SID,
+// and OID supplied by LINE metadata. Album post previews use service "album"
+// and SID "a".
+func (c *Client) DownloadOBSResource(ctx context.Context, service, sid, oid, messageID string) ([]byte, error) {
+	return c.downloadOBSWithServiceAndSIDOptions(ctx, service, sid, oid, messageID, OBSDownloadOptions{})
+}
+
+// DownloadAlbumPreview retrieves the thumbnail referenced by an album post
+// notification. Album thumbnails use a dedicated TID and are authorized by the
+// notification's chatId through LINE's Chrome home channel token.
+func (c *Client) DownloadAlbumPreview(ctx context.Context, oid, chatID, albumID string) ([]byte, error) {
+	if oid == "" || chatID == "" {
+		return nil, errors.New("album preview OID and chat ID are required")
+	}
+	channelToken, err := c.AcquireChannelAccessToken(albumPreviewChannelID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to acquire album preview channel token: %w", err)
+	}
+
+	requestURL := fmt.Sprintf(
+		"%s/r/album/a/%s/%s",
+		OBSBaseURL,
+		url.PathEscape(oid),
+		albumPreviewTID,
+	)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, requestURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create album preview request: %w", err)
+	}
+	req.Header.Set("User-Agent", UserAgent)
+	req.Header.Set("X-Line-ChannelToken", channelToken)
+	req.Header.Set("X-Line-Mid", chatID)
+	if albumID != "" {
+		req.Header.Set("X-Line-Album", albumID)
+	}
+	if c.AccessToken != "" {
+		req.Header.Set("X-Line-Access", c.AccessToken)
+	}
+
+	resp, err := c.obsHTTPClient().Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("OBS download request failed: %w", err)
+	}
+	body, readErr := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if readErr != nil {
+		return nil, fmt.Errorf("failed to read OBS response body: %w", readErr)
+	}
+	switch resp.StatusCode {
+	case http.StatusOK:
+		return body, nil
+	case http.StatusAccepted:
+		return nil, ErrOBSEncodingIncomplete
+	case http.StatusNotFound:
+		return nil, ErrOBSObjectNotFound
+	default:
+		return nil, fmt.Errorf("OBS download failed (%d): %s", resp.StatusCode, string(body))
+	}
+}
+
+func (c *Client) downloadOBSWithServiceAndSIDOptions(ctx context.Context, service, sid, oid, messageID string, opts OBSDownloadOptions) ([]byte, error) {
+	if service == "" || sid == "" || oid == "" {
+		return nil, errors.New("OBS service, SID, and OID are required")
+	}
+
+	// URL structure: https://obs.line-apps.com/r/{service}/{SID}/{OID}
+	obsURL := fmt.Sprintf(
+		"%s/r/%s/%s/%s",
+		OBSBaseURL,
+		url.PathEscape(service),
+		url.PathEscape(sid),
+		url.PathEscape(oid),
+	)
+	objectInfoURL := obsURL
+	if opts.TID != "" {
+		obsURL += "/" + url.PathEscape(opts.TID)
+	}
+	if opts.OBSPop != "" {
+		query := "?p=" + url.QueryEscape(opts.OBSPop)
+		objectInfoURL += query
+		obsURL += query
+	}
+
+	obsToken, err := c.AcquireEncryptedAccessToken()
+	if err != nil {
+		return nil, fmt.Errorf("failed to acquire encrypted access token: %w", err)
+	}
+
+	// Chrome preflights object_info.obs before downloading media. This is
+	// important because a missing object and an object that is still encoding
+	// require different client behavior.
+	for attempt := 0; attempt <= obsMaxRetries; attempt++ {
+		err = c.checkOBSObjectReady(ctx, objectInfoURL, obsToken, messageID)
+		if err == nil {
+			var data []byte
+			data, err = c.downloadOBSObject(ctx, obsURL, obsToken, messageID, opts.MaxBytes)
+			if err == nil {
+				return data, nil
+			}
+		}
+		if !errors.Is(err, ErrOBSEncodingIncomplete) {
+			return nil, err
+		}
+		if attempt >= obsMaxRetries {
+			return nil, fmt.Errorf("%w after %d retries", ErrOBSEncodingIncomplete, obsMaxRetries)
+		}
+		if err = waitForOBSRetry(ctx); err != nil {
+			return nil, err
+		}
+	}
+
+	return nil, fmt.Errorf("%w after %d retries", ErrOBSEncodingIncomplete, obsMaxRetries)
+}
+
+type obsObjectInfo struct {
+	Status       string `json:"status"`
+	EncodeStatus string `json:"encodeStatus"`
+}
+
+func (c *Client) checkOBSObjectReady(ctx context.Context, obsURL, obsToken, messageID string) error {
+	parsedURL, err := url.Parse(obsURL)
+	if err != nil {
+		return fmt.Errorf("failed to parse OBS object URL: %w", err)
+	}
+	parsedURL.Path = strings.TrimSuffix(parsedURL.Path, "/") + "/object_info.obs"
+
+	req, err := c.newOBSDownloadRequest(ctx, parsedURL.String(), obsToken, messageID)
+	if err != nil {
+		return fmt.Errorf("failed to create OBS object info request: %w", err)
+	}
+	resp, err := c.obsHTTPClient().Do(req)
+	if err != nil {
+		return fmt.Errorf("OBS object info request failed: %w", err)
+	}
+	body, readErr := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if readErr != nil {
+		return fmt.Errorf("failed to read OBS object info response: %w", readErr)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("OBS object info failed (%d): %s", resp.StatusCode, string(body))
+	}
+
+	var info obsObjectInfo
+	if err = json.Unmarshal(body, &info); err != nil {
+		return fmt.Errorf("%w: invalid response: %v", ErrOBSObjectValidation, err)
+	}
+	switch info.Status {
+	case "notexist":
+		return ErrOBSObjectNotFound
+	case "exist":
+		if info.EncodeStatus == "ing" {
+			return ErrOBSEncodingIncomplete
+		}
+		return nil
+	default:
+		return fmt.Errorf("%w: unexpected status %q", ErrOBSObjectValidation, info.Status)
+	}
+}
+
+func (c *Client) downloadOBSObject(ctx context.Context, obsURL, obsToken, messageID string, maxBytes int64) ([]byte, error) {
+	req, err := c.newOBSDownloadRequest(ctx, obsURL, obsToken, messageID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create OBS download request: %w", err)
+	}
+	resp, err := c.obsHTTPClient().Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("OBS download request failed: %w", err)
+	}
+	var reader io.Reader = resp.Body
+	if maxBytes > 0 {
+		reader = io.LimitReader(resp.Body, maxBytes+1)
+	}
+	body, readErr := io.ReadAll(reader)
+	if maxBytes > 0 && int64(len(body)) > maxBytes {
+		resp.Body.Close()
+		return nil, ErrOBSSizeLimit
+	}
+	resp.Body.Close()
+	if readErr != nil {
+		return nil, fmt.Errorf("failed to read OBS response body: %w", readErr)
+	}
+	switch resp.StatusCode {
+	case http.StatusOK:
+		return body, nil
+	case http.StatusAccepted:
+		return nil, ErrOBSEncodingIncomplete
+	default:
+		return nil, fmt.Errorf("OBS download failed (%d): %s", resp.StatusCode, string(body))
+	}
+}
+
+func (c *Client) newOBSDownloadRequest(ctx context.Context, requestURL, obsToken, messageID string) (*http.Request, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, requestURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("User-Agent", UserAgent)
+	req.Header.Set("x-line-application", lineApplicationHeader)
+	if obsToken != "" {
+		req.Header.Set("x-line-access", obsToken)
+	}
+	if messageID != "" {
+		req.Header.Set("x-talk-meta", c.constructTalkMeta(messageID))
+	}
+	return req, nil
+}
+
+func waitForOBSRetry(ctx context.Context) error {
+	if obsRetryDelay <= 0 {
+		return nil
+	}
+	timer := time.NewTimer(obsRetryDelay)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// this builds x-talk-meta
+// base64(json({"message": base64(thrift_message)}))
+func (c *Client) constructTalkMeta(messageID string) string {
+	// [field_type][field_id_16bit][string_length_32bit][string_bytes]...[stop_byte]
+	var buf bytes.Buffer
+
+	// Field 4 (id) - STRING type (0x0B)
+	buf.WriteByte(0x0B)                                          // TType.STRING
+	binary.Write(&buf, binary.BigEndian, uint16(4))              // field ID = 4
+	binary.Write(&buf, binary.BigEndian, uint32(len(messageID))) // string length
+	buf.WriteString(messageID)                                   // message ID
+
+	// required to send a valid struct
+	buf.WriteByte(0x0F)                              // TType.LIST
+	binary.Write(&buf, binary.BigEndian, uint16(27)) // field ID = 27
+	buf.WriteByte(0x0C)                              // element type = STRUCT
+	binary.Write(&buf, binary.BigEndian, uint32(0))  // list size = 0
+
+	buf.WriteByte(0x00)
+
+	thriftB64 := base64.StdEncoding.EncodeToString(buf.Bytes())
+
+	metaJSON := map[string]string{"message": thriftB64}
+	metaBytes, _ := json.Marshal(metaJSON)
+
+	return base64.StdEncoding.EncodeToString(metaBytes)
+}
+
+func (c *Client) GetPageInfo(url string) (*PageInfoResult, error) {
+	apiURL := "https://legy-jp.line-apps.com/sc/api/v2/pageinfo/get"
+	req, err := http.NewRequest("GET", apiURL, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	q := req.URL.Query()
+	q.Add("url", url)
+	q.Add("caller", "LINE_CHROME")
+	req.URL.RawQuery = q.Encode()
+
+	req.Header.Set("User-Agent", UserAgent)
+	if c.AccessToken != "" {
+		req.Header.Set("x-line-access", c.AccessToken)
+		req.Header.Set("Cookie", fmt.Sprintf("lct=%s", c.AccessToken))
+	}
+
+	resp, err := c.HTTPClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("pageinfo request failed: %d", resp.StatusCode)
+	}
+
+	var wrapper PageInfoResponse
+	if err := json.NewDecoder(resp.Body).Decode(&wrapper); err != nil {
+		return nil, err
+	}
+
+	if wrapper.Code != 0 {
+		return nil, fmt.Errorf("pageinfo API error: %s", wrapper.Message)
+	}
+
+	return &wrapper.Result, nil
+}

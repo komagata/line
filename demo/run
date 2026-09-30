@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+set -euo pipefail
+exec omarchy-shell shell summon io.github.komagata.line '{"demo":true}'

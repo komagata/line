@@ -1,0 +1,39 @@
+LINE for Omarchy — source provenance
+
+Plugin QML and local GUI/backend integration: Copyright (c) 2026 komagata.
+Plugin license: MIT, see LICENSE in this payload.
+
+Copied upstream: github.com/kongesque/line-cli
+Revision: 477bc8ce461a2d82a6b56b113b35d3e7232dfcd0
+Upstream license: MIT; Copyright (c) 2024 Tulir Asokan;
+Copyright (c) 2026 Kongesque. Full terms follow in NOTICE.
+
+Source was copied with the original profiles and stickers patches applied:
+profiles SHA-256 6770e1ffbdcf907c50288c42691e7b85c226cabe5391371d887f483328a64f70
+stickers SHA-256 23bff08c0c2b1950ed7f34f3efb45744c88011a843d449dd571d7d2f55ea0062
+Patch evidence is retained in the local development archive (not published).
+The copied source already carries these changes; builds do not apply patches.
+Terminal cmd/line, internal/cli and internal/input are excluded.
+
+Generated pkg/ltsm/wbc_generated.go derives from tools/c2go wasm2c output.
+pkg/ltsm tables and data/mem_init_0_4m.bin (embedded LINE protocol data),
+pkg/e2ee and runner sources are retained from this upstream revision, unchanged.
+No independent copyright/license grant for generated data is asserted here.
+Local cancellation, helper ownership and metadata repair modifications are
+recorded in the local development archive (not published).
+
+The Go standard library and the runtime-linked modules below are compiled into
+bin/line-gui. Module versions are pinned by backend/go.mod and backend/go.sum.
+No runtime package download, patching or compilation occurs. Dependencies used
+only by source tests (including gozxing, term and xerrors) are not in this binary.
+
+QR Reed-Solomon dependency: github.com/yeqown/reedsolomon
+Pinned version: v1.0.1-0.20260308105121-c5f4bc9af094
+Revision: c5f4bc9af094852b52e593a5f964647c43028c51
+Source: https://github.com/yeqown/reedsolomon/tree/c5f4bc9af094852b52e593a5f964647c43028c51
+Parent (v1.0.0): 5441098c575e61f884a016a3398726d2295fa995
+License: MIT, Copyright (c) 2026 yeqown; full original terms in NOTICE.
+License URL: https://github.com/yeqown/reedsolomon/blob/c5f4bc9af094852b52e593a5f964647c43028c51/LICENSE
+LICENSE SHA-256: 58fb0c85bfc183bad46c47dd38ac17e3372d86c1fcb65bce880fa1d964424f69
+The pinned module ZIP and v1.0.0 ZIP differ only by the added LICENSE file;
+all common file contents are identical. No QR implementation is changed.

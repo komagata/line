@@ -1,0 +1,336 @@
+package line
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net"
+	"strconv"
+	"strings"
+)
+
+var (
+	// ErrE2EEDisabled distinguishes explicit capability responses from missing
+	// or malformed keys. Callers must not downgrade encryption on the latter.
+	ErrE2EEDisabled          = errors.New("letter sealing is explicitly unavailable")
+	ErrNoUsableE2EEPublicKey = errors.New("no usable E2EE public key")
+	ErrNoUsableE2EEGroupKey  = errors.New("no usable E2EE group key")
+	ErrGroupKeyNotFound      = errors.New("group key not found")
+)
+
+// IsE2EEDisabled accepts explicit capability responses only. Unlike the legacy
+// IsNoUsable helpers it excludes authentication failures and malformed keys.
+func IsE2EEDisabled(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, ErrE2EEDisabled) {
+		return true
+	}
+	msg := protocolMessage(err)
+	start := strings.IndexByte(msg, '{')
+	if start < 0 {
+		return false
+	}
+	var response struct {
+		Code int               `json:"code"`
+		Data talkExceptionData `json:"data"`
+	}
+	if json.Unmarshal([]byte(msg[start:]), &response) != nil || response.Code != 10051 || !strings.EqualFold(response.Data.Name, "TalkException") {
+		return false
+	}
+	return (response.Data.Code == 98 && strings.Contains(strings.ToLower(response.Data.Reason), "member settings off")) ||
+		(response.Data.Code == 100 && strings.EqualFold(strings.TrimSpace(response.Data.Reason), "exceed max member"))
+}
+
+// IsRefreshRequired returns true when LINE reports that the access token must
+// be refreshed before the request can be retried.
+func IsRefreshRequired(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(protocolMessage(err))
+	return hasJSONCode(msg, 119) ||
+		strings.Contains(msg, "access token refresh required") ||
+		strings.Contains(msg, "must_refresh_v3_token") || isExceptionCode(err, "TokenAuthException", 4)
+}
+
+func IsLoggedOut(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(strings.ToUpper(protocolMessage(err)), "V3_TOKEN_CLIENT_LOGGED_OUT") ||
+		isExceptionCode(err, "TalkException", 8) ||
+		isExceptionCode(err, "TokenAuthException", 3) ||
+		IsInvalidSenderKey(err) ||
+		IsRequestNeedLogin(err)
+}
+
+func IsInvalidSenderKey(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(protocolMessage(err))
+	return hasResponseErrorCode(msg) &&
+		strings.Contains(msg, "talkexception") &&
+		hasJSONCode(msg, 83) &&
+		strings.Contains(msg, "invalid sender key")
+}
+
+func IsRequestNeedLogin(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(protocolMessage(err))
+	return strings.Contains(msg, "request_need_login") ||
+		hasJSONCode(msg, 10004)
+}
+
+func IsUnauthorizedStatus(err error) bool {
+	if err == nil {
+		return false
+	}
+	var response *ResponseError
+	if errors.As(err, &response) && (response.Status == 401 || response.Status == 403) {
+		return true
+	}
+	msg := strings.ToLower(protocolMessage(err))
+	return strings.Contains(msg, "api error 401") ||
+		strings.Contains(msg, "api error 403") ||
+		strings.Contains(msg, "http 401") ||
+		strings.Contains(msg, "http 403") ||
+		strings.Contains(msg, "sse error: 401") ||
+		strings.Contains(msg, "sse error: 403") ||
+		strings.Contains(msg, "obs upload failed (401)") ||
+		strings.Contains(msg, "obs upload failed (403)") ||
+		strings.Contains(msg, "obs object info failed (401)") ||
+		strings.Contains(msg, "obs object info failed (403)") ||
+		strings.Contains(msg, "obs download failed (401)") ||
+		strings.Contains(msg, "obs download failed (403)")
+}
+
+func IsAuthError(err error) bool {
+	return IsRefreshRequired(err) || IsLoggedOut(err) || IsUnauthorizedStatus(err) ||
+		isExceptionCode(err, "TokenAuthException", 1) || isExceptionCode(err, "TokenAuthException", 2)
+}
+
+// IsGroupKeyNotFound returns true when the error is specifically code 5 "not found"
+// from getE2EEGroupSharedKey / getLastE2EEGroupSharedKey — meaning no group key has been
+// registered yet, but E2EE is supported. Callers should attempt to register a key.
+// Matches both the processed error (ErrGroupKeyNotFound) and the raw HTTP 400 error
+// from callRPC which contains the TalkException JSON payload.
+func IsGroupKeyNotFound(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, ErrGroupKeyNotFound) {
+		return true
+	}
+	msg := strings.ToLower(protocolMessage(err))
+	if strings.Contains(msg, "group key not found: not found") {
+		return true
+	}
+	// Match raw API error: HTTP 400 with TalkException code 5 "not found"
+	return strings.Contains(msg, "\"code\":10051") &&
+		strings.Contains(msg, "talkexception") &&
+		(strings.Contains(msg, "\"code\":5,") || strings.Contains(msg, "\"code\":5}"))
+}
+
+// IsNoUsableE2EEGroupKey returns true when a group has no shared E2EE key
+// (at least one member has Letter Sealing disabled).
+func IsNoUsableE2EEGroupKey(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, ErrNoUsableE2EEGroupKey) {
+		return true
+	}
+	msg := strings.ToLower(protocolMessage(err))
+	if strings.Contains(msg, "no group key found") ||
+		strings.Contains(msg, "no group shared key returned") {
+		return true
+	}
+	// Detect TalkException codes in raw API error strings (HTTP 400 with code 10051).
+	// Code 98 = member has LS off; Code 1 = auth failed;
+	// Code 100 "exceed max member" = the group is too large for key registration.
+	// NOTE: Code 5 "not found" is handled by IsGroupKeyNotFound (auto-register), NOT here.
+	if hasResponseErrorCode(msg) && strings.Contains(msg, "talkexception") {
+		if strings.Contains(msg, "\"code\":98,") || strings.Contains(msg, "\"code\":98}") ||
+			strings.Contains(msg, "\"code\":1,") || strings.Contains(msg, "\"code\":1}") ||
+			(hasJSONCode(msg, 100) && (strings.Contains(msg, `"reason":"exceed max member"`) ||
+				strings.Contains(msg, `"reason": "exceed max member"`))) {
+			return true
+		}
+	}
+	return false
+}
+
+type talkExceptionData struct {
+	Name    string `json:"name"`
+	Message string `json:"message"`
+	Code    int    `json:"code"`
+	Reason  string `json:"reason"`
+}
+
+// IsTalkExceptionNotFound returns true when LINE wraps a TalkException code 5
+// "not found" response. Callers must interpret the method context themselves:
+// the same code can mean different missing resources for different Talk APIs.
+func IsTalkExceptionNotFound(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(protocolMessage(err))
+	return hasResponseErrorCode(msg) &&
+		strings.Contains(msg, "talkexception") &&
+		(strings.Contains(msg, "\"code\":5,") ||
+			strings.Contains(msg, "\"code\":5}") ||
+			strings.Contains(msg, "\"code\": 5,")) &&
+		(strings.Contains(msg, "\"reason\":\"not found\"") ||
+			strings.Contains(msg, "\"reason\": \"not found\""))
+}
+
+// IsNotAMemberError returns true when the API reports the user is not a member of a chat.
+func IsNotAMemberError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(protocolMessage(err))
+	return hasResponseErrorCode(msg) &&
+		strings.Contains(msg, "talkexception") &&
+		strings.Contains(msg, "\"code\":10,") &&
+		strings.Contains(msg, "not a member")
+}
+
+func IsInvalidPaidReactionType(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(protocolMessage(err))
+	return hasResponseErrorCode(msg) &&
+		strings.Contains(msg, "invalid paidreactiontype in reactiontype")
+}
+
+func hasResponseErrorCode(msg string) bool {
+	return strings.Contains(msg, "\"code\":10051") ||
+		strings.Contains(msg, "\"code\": 10051") ||
+		strings.Contains(msg, "code 10051")
+}
+
+func hasJSONCode(msg string, code int) bool {
+	value := strconv.Itoa(code)
+	for _, prefix := range []string{`"code":`, `"code": `} {
+		codeStart := prefix + value
+		for _, suffix := range []string{",", "}", " ", "\t", "\r", "\n"} {
+			if strings.Contains(msg, codeStart+suffix) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func isNoUsableE2EEGroupKeyTalkException(message string, data talkExceptionData) bool {
+	if !strings.EqualFold(message, "RESPONSE_ERROR") || !strings.EqualFold(data.Name, "TalkException") {
+		return false
+	}
+	// Error 5 "not found" = no group shared key exists
+	// Error 98 "member settings off" = at least one member has LS disabled
+	// Error 100 "exceed max member" = the group is too large for key registration
+	return (data.Code == 5 && strings.EqualFold(data.Reason, "not found")) ||
+		(data.Code == 98 && strings.Contains(strings.ToLower(data.Reason), "member settings off")) ||
+		(data.Code == 100 && strings.EqualFold(strings.TrimSpace(data.Reason), "exceed max member"))
+}
+
+func parseTalkExceptionData(raw json.RawMessage) talkExceptionData {
+	var data talkExceptionData
+	_ = json.Unmarshal(raw, &data)
+	return data
+}
+
+func parseE2EEGroupKeyError(method, message string, rawData json.RawMessage) error {
+	talk := parseTalkExceptionData(rawData)
+	if isNoUsableE2EEGroupKeyTalkException(message, talk) {
+		if talk.Code == 5 {
+			return fmt.Errorf("%w: %s", ErrGroupKeyNotFound, talk.Reason)
+		}
+		return fmt.Errorf("%w: %w: %s", ErrNoUsableE2EEGroupKey, ErrE2EEDisabled, talk.Reason)
+	}
+	return fmt.Errorf("%s failed: %s", method, message)
+}
+
+// ResponseError retains protocol evidence privately; its printable form never
+// exposes server bodies, which may include credentials or message contents.
+type ResponseError struct {
+	Status int
+	code   int
+	body   string
+}
+
+func (e *ResponseError) Error() string {
+	return fmt.Sprintf("LINE response error (HTTP %d, code %d)", e.Status, e.code)
+}
+
+func responseError(status int, body []byte) error {
+	var envelope struct {
+		Code int `json:"code"`
+	}
+	_ = json.Unmarshal(body, &envelope)
+	if status == 200 && envelope.Code == 0 {
+		return nil
+	}
+	return &ResponseError{Status: status, code: envelope.Code, body: string(body)}
+}
+
+func protocolMessage(err error) string {
+	var response *ResponseError
+	var msg string
+	if errors.As(err, &response) {
+		msg = response.body
+	} else {
+		msg = err.Error()
+	}
+	// Normalize insignificant JSON whitespace before inspecting protocol codes.
+	if start := strings.IndexByte(msg, '{'); start >= 0 {
+		var compact bytes.Buffer
+		if json.Compact(&compact, []byte(msg[start:])) == nil {
+			return msg[:start] + compact.String()
+		}
+	}
+	return msg
+}
+
+// IsTransientError is used only for token refresh. Mutations never use it.
+func IsTransientError(err error) bool {
+	if err == nil || errors.Is(err, context.Canceled) || IsAuthError(err) {
+		return false
+	}
+	var response *ResponseError
+	if errors.As(err, &response) {
+		return response.Status == 408 || response.Status == 429 || response.Status >= 500 && response.Status <= 599
+	}
+	var network net.Error
+	return errors.As(err, &network) || errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF)
+}
+
+// Service codes are meaningful only in their exception namespace. Gateway
+// RESPONSE_ERROR (10051) alone is not an authentication failure.
+func isExceptionCode(err error, name string, code int) bool {
+	if err == nil {
+		return false
+	}
+	msg := protocolMessage(err)
+	start := strings.IndexByte(msg, '{')
+	if start < 0 {
+		return false
+	}
+	var envelope struct {
+		Data talkExceptionData `json:"data"`
+	}
+	if json.Unmarshal([]byte(msg[start:]), &envelope) != nil {
+		return false
+	}
+	return strings.EqualFold(envelope.Data.Name, name) && envelope.Data.Code == code
+}

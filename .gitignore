@@ -1,0 +1,26 @@
+__pycache__/
+*.py[cod]
+*.log
+test-results/
+
+/build/
+# Packaging stages are development output only.
+.plugin-stage-*/
+
+# Local investigation archives: retain on disk, exclude from public source.
+/docs/legacy/
+/docs/verification/
+/docs/screenshots/
+/docs/DESIGN.md
+/docs/VALIDATION.md
+/docs/HOST-VALIDATION.md
+/docs/CAPABILITIES.md
+/docs/FEATURES-AUDIT.md
+/docs/go-host-validation.md
+/docs/go-audit.md
+/docs/go-migration.md
+/docs/go-repair.md
+/docs/go-packaging.md
+/docs/go-legacy-assertions.md
+/docs/stickers.md
+/backend/internal/session/HEADLESS.md

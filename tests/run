@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.."
+for tool in go python3 qmltestrunner; do
+  command -v "$tool" >/dev/null || { printf 'Required test tool missing: %s\n' "$tool" >&2; exit 1; }
+done
+export GOCACHE=${GOCACHE:-/tmp/omarchy-line-gocache}
+export GOPROXY=off GOTOOLCHAIN=local
+python3 -B tests/test_setup.py
+python3 scripts/validate_manifest.py .
+(
+  cd backend
+  go test -mod=readonly -race ./internal/... ./cmd/... ./pkg/line/... ./pkg/e2ee
+  go test -mod=readonly ./pkg ./pkg/ltsm
+  go vet -mod=readonly ./internal/... ./cmd/... ./pkg/line ./pkg/e2ee ./pkg
+)
+python3 -B tests/test_message_links.py
+QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software \
+  QT_QUICK_CONTROLS_STYLE=Basic QT_QPA_PLATFORMTHEME=generic \
+  qmltestrunner -input tests/qml -import tests/qml/imports -o -,txt

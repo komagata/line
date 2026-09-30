@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "id": "io.github.komagata.line",
+  "name": "LINE for Omarchy",
+  "version": "0.1.0",
+  "author": "komagata",
+  "license": "MIT",
+  "description": "LINEのチャット・添付・返信を使うネイティブプラグイン",
+  "kinds": [
+    "bar-widget",
+    "panel",
+    "service"
+  ],
+  "entryPoints": {
+    "barWidget": "BarWidget.qml",
+    "panel": "Panel.qml",
+    "service": "Service.qml"
+  },
+  "barWidget": {
+    "displayName": "LINE for Omarchy",
+    "description": "LINEのチャット・添付・返信を使うネイティブプラグイン",
+    "category": "Other",
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "defaults": {},
+    "schema": []
+  }
+}
