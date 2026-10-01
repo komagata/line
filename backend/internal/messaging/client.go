@@ -154,11 +154,14 @@ func (c *Client) Decode(chat string, msg *line.Message) Message {
 	item := Message{ID: msg.ID, From: msg.From, To: msg.To, CreatedTime: timestamp, ContentType: msg.ContentType,
 		ReplyTo: msg.RelatedMessageID, Reactions: msg.Reactions,
 		Encrypted: len(msg.Chunks) > 0 || msg.ContentMetadata["e2eeVersion"] != ""}
-	if msg.ContentType == 7 && !item.Encrypted {
+	// A version marker alone does not encrypt clear receive-only sticker IDs.
+	// Ciphertext still fails closed, and metadata validation remains mandatory.
+	if msg.ContentType == 7 && len(msg.Chunks) == 0 {
 		item.Status = "unsupported"
 		item.Sticker = projectSticker(msg.ContentMetadata)
 		if item.Sticker != nil {
 			item.Status = "sticker"
+			item.Encrypted = false
 		}
 	} else if IsDownloadable(msg.ContentType) {
 		item.Status = "attachment"

@@ -34,6 +34,26 @@ TestCase {
         images={};for(var i=1;i<142;i++)images[String(i)]=Photos.sage
         compare(Object.keys(service.safeStickers(images)).length,0)
     }
+    function test_photo_current_message_allowlist_and_total_budget() {
+        var entries={'101':{status:'ready',data:Photos.sage},'102':{status:'ready',data:'https://example.org/private.png'},'103':{status:'ready',data:'file:///tmp/private.png'},'104':{status:'error',data:Photos.sage},'999':{status:'ready',data:Photos.sage}}
+        var messages=[];for(var i=101;i<=104;i++)messages.push({id:String(i),contentType:1})
+        service.consume(frame('',0,{photoThumbnails:entries,messages:messages}))
+        compare(Object.keys(service.view.photoThumbnails).sort().join(','),'101,102,103,104')
+        compare(service.view.photoThumbnails['102'].status,'error');compare(service.view.photoThumbnails['102'].data,'')
+        compare(service.view.photoThumbnails['104'].data,'')
+        entries={};messages=[]
+        for(i=100;i<108;i++){var id=String(i);messages.push({id:id,contentType:1});entries[id]={status:'ready',data:'data:image/png;base64,iVBORw0KGgo'+'A'.repeat(86000)}}
+        compare(Object.keys(service.safePhotos(entries,messages)).length,0)
+        service.consume(frame('',0,{photoThumbnails:{'101':{status:'ready',data:Photos.sage}},messages:[{id:'101',contentType:0}]}))
+        compare(Object.keys(service.view.photoThumbnails).length,0)
+    }
+    function test_photos_clear_on_mode_login_and_exit() {
+        var entries={'101':{status:'ready',data:Photos.sage}},messages=[{id:'101',contentType:1}]
+        service.consume(frame('',0,{photoThumbnails:entries,messages:messages}));compare(Object.keys(service.view.photoThumbnails).length,1)
+        service.setMode('live');compare(Object.keys(service.view.photoThumbnails).length,0)
+        service.consume(frame('',0,{mode:'live',photoThumbnails:entries,messages:messages}));service.login();compare(Object.keys(service.view.photoThumbnails).length,0)
+        service.cancelLogin();service.consume(frame('',0,{mode:'live',photoThumbnails:entries,messages:messages}));process.exited(1,0);compare(Object.keys(service.view.photoThumbnails).length,0)
+    }
     function test_preview_guard_and_lifecycle_clear() {
         for(var source of ['https://example.org/a','file:///tmp/a','data:image/svg+xml;base64,AAAA']) {service.consume(frame('',0,{preview:source}));compare(service.view.preview,'')}
         service.consume(frame('',0,{preview:Photos.sage}));compare(service.view.preview,Photos.sage)

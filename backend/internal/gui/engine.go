@@ -18,29 +18,30 @@ var fullID = regexp.MustCompile(`^(?:[uUcCrR][A-Za-z0-9_-]{43}|[ucr][0-9a-f]{32}
 var numericID = regexp.MustCompile(`^[1-9][0-9]{0,19}$`)
 
 type Command struct {
-	Action       string `json:"action"`
-	Mode         string `json:"mode,omitempty"`
-	Locale       string `json:"locale,omitempty"`
-	ID           string `json:"id,omitempty"`
-	Session      string `json:"session,omitempty"`
-	Selection    int    `json:"selection,omitempty"`
-	Text         string `json:"text,omitempty"`
-	Sequence     int    `json:"sequence,omitempty"`
-	ReplyTo      string `json:"replyTo,omitempty"`
-	AttachmentID string `json:"attachmentId,omitempty"`
-	ContactID    string `json:"contactId,omitempty"`
-	MessageID    string `json:"messageId,omitempty"`
-	Reaction     string `json:"reaction,omitempty"`
-	Remove       bool   `json:"remove,omitempty"`
-	Confirmed    bool   `json:"confirmed,omitempty"`
-	URL          string `json:"url,omitempty"`
-	Enabled      bool   `json:"enabled,omitempty"`
-	Focused      bool   `json:"focused,omitempty"`
-	Request      string `json:"request,omitempty"`
-	Attempt      string `json:"attempt,omitempty"`
-	PackageID    string `json:"packageId,omitempty"`
-	StickerID    string `json:"stickerId,omitempty"`
-	Page         int    `json:"page,omitempty"`
+	MessageIDs   []string `json:"messageIds,omitempty"`
+	Action       string   `json:"action"`
+	Mode         string   `json:"mode,omitempty"`
+	Locale       string   `json:"locale,omitempty"`
+	ID           string   `json:"id,omitempty"`
+	Session      string   `json:"session,omitempty"`
+	Selection    int      `json:"selection,omitempty"`
+	Text         string   `json:"text,omitempty"`
+	Sequence     int      `json:"sequence,omitempty"`
+	ReplyTo      string   `json:"replyTo,omitempty"`
+	AttachmentID string   `json:"attachmentId,omitempty"`
+	ContactID    string   `json:"contactId,omitempty"`
+	MessageID    string   `json:"messageId,omitempty"`
+	Reaction     string   `json:"reaction,omitempty"`
+	Remove       bool     `json:"remove,omitempty"`
+	Confirmed    bool     `json:"confirmed,omitempty"`
+	URL          string   `json:"url,omitempty"`
+	Enabled      bool     `json:"enabled,omitempty"`
+	Focused      bool     `json:"focused,omitempty"`
+	Request      string   `json:"request,omitempty"`
+	Attempt      string   `json:"attempt,omitempty"`
+	PackageID    string   `json:"packageId,omitempty"`
+	StickerID    string   `json:"stickerId,omitempty"`
+	Page         int      `json:"page,omitempty"`
 }
 type Chat struct {
 	PreviewMessage  *Message `json:"-"`
@@ -145,39 +146,44 @@ type StickerView struct {
 	Items     []Sticker        `json:"items"`
 	Selected  *Sticker         `json:"selected"`
 }
+type PhotoThumbnail struct {
+	Status string `json:"status"`
+	Data   string `json:"data"`
+}
 type View struct {
-	Mode             string            `json:"mode"`
-	Session          string            `json:"session"`
-	Selection        int               `json:"selection"`
-	Status           string            `json:"status"`
-	StatusText       string            `json:"statusText"`
-	Login            Login             `json:"login"`
-	Contacts         []Contact         `json:"contacts"`
-	ContactsStatus   string            `json:"contactsStatus"`
-	ContactNote      string            `json:"contactNote"`
-	Avatars          map[string]string `json:"avatars"`
-	StickerImages    map[string]string `json:"stickerImages"`
-	Stickers         StickerView       `json:"stickers"`
-	Chats            []Chat            `json:"chats"`
-	Messages         []Message         `json:"messages"`
-	SelectedID       string            `json:"selectedId"`
-	Draft            string            `json:"draft"`
-	DraftVersion     int               `json:"draftVersion"`
-	DraftAck         int               `json:"draftAck"`
-	Reply            *Reply            `json:"reply"`
-	Attachment       *Attachment       `json:"attachment"`
-	Preview          string            `json:"preview"`
-	FileStatus       string            `json:"fileStatus"`
-	Notifications    bool              `json:"notifications"`
-	NotificationNote string            `json:"notificationNote"`
-	Account          Account           `json:"account"`
-	HistoryStatus    string            `json:"historyStatus"`
-	HistoryNote      string            `json:"historyNote"`
-	SendStatus       string            `json:"sendStatus"`
-	SendNote         string            `json:"sendNote"`
-	Watching         bool              `json:"watching"`
-	NamesPartial     bool              `json:"namesPartial"`
-	Busy             bool              `json:"busy"`
+	Mode             string                    `json:"mode"`
+	Session          string                    `json:"session"`
+	Selection        int                       `json:"selection"`
+	Status           string                    `json:"status"`
+	StatusText       string                    `json:"statusText"`
+	Login            Login                     `json:"login"`
+	Contacts         []Contact                 `json:"contacts"`
+	ContactsStatus   string                    `json:"contactsStatus"`
+	ContactNote      string                    `json:"contactNote"`
+	Avatars          map[string]string         `json:"avatars"`
+	PhotoThumbnails  map[string]PhotoThumbnail `json:"photoThumbnails"`
+	StickerImages    map[string]string         `json:"stickerImages"`
+	Stickers         StickerView               `json:"stickers"`
+	Chats            []Chat                    `json:"chats"`
+	Messages         []Message                 `json:"messages"`
+	SelectedID       string                    `json:"selectedId"`
+	Draft            string                    `json:"draft"`
+	DraftVersion     int                       `json:"draftVersion"`
+	DraftAck         int                       `json:"draftAck"`
+	Reply            *Reply                    `json:"reply"`
+	Attachment       *Attachment               `json:"attachment"`
+	Preview          string                    `json:"preview"`
+	FileStatus       string                    `json:"fileStatus"`
+	Notifications    bool                      `json:"notifications"`
+	NotificationNote string                    `json:"notificationNote"`
+	Account          Account                   `json:"account"`
+	HistoryStatus    string                    `json:"historyStatus"`
+	HistoryNote      string                    `json:"historyNote"`
+	SendStatus       string                    `json:"sendStatus"`
+	SendNote         string                    `json:"sendNote"`
+	Watching         bool                      `json:"watching"`
+	NamesPartial     bool                      `json:"namesPartial"`
+	Busy             bool                      `json:"busy"`
 }
 type Snapshot struct {
 	Account        Account
@@ -240,6 +246,13 @@ type WatchEvent struct {
 }
 
 type Engine struct {
+	photoCtx        context.Context
+	photoCancel     context.CancelFunc
+	photoGeneration uint64
+	photoActive     int // Includes cancelled jobs until they actually finish.
+	photoQueue      []string
+	photoVisible    map[string]bool
+
 	locale            string
 	mu                sync.Mutex
 	ops               Operations
@@ -309,7 +322,7 @@ func token() string {
 	return hex.EncodeToString(b)
 }
 func initial() View {
-	return View{Mode: "live", Session: token(), Status: "idle", StatusText: "準備しています…", Login: Login{Stage: "idle"}, Contacts: []Contact{}, ContactsStatus: "idle", Avatars: map[string]string{}, StickerImages: map[string]string{}, Stickers: StickerView{Status: "idle", Products: []StickerProduct{}, Items: []Sticker{}}, Chats: []Chat{}, Messages: []Message{}, Account: Account{Name: "自分", NameUnavailable: true}, HistoryStatus: "idle", SendStatus: "idle", FileStatus: "idle", Notifications: true}
+	return View{Mode: "live", Session: token(), Status: "idle", StatusText: "準備しています…", Login: Login{Stage: "idle"}, Contacts: []Contact{}, ContactsStatus: "idle", Avatars: map[string]string{}, PhotoThumbnails: map[string]PhotoThumbnail{}, StickerImages: map[string]string{}, Stickers: StickerView{Status: "idle", Products: []StickerProduct{}, Items: []Sticker{}}, Chats: []Chat{}, Messages: []Message{}, Account: Account{Name: "自分", NameUnavailable: true}, HistoryStatus: "idle", SendStatus: "idle", FileStatus: "idle", Notifications: true}
 }
 func NewEngine(ops Operations, emit func(View)) *Engine {
 	ctx, cancel := context.WithCancel(context.Background())
@@ -341,6 +354,7 @@ func (v *View) AvatarClear() {
 	v.Avatars = map[string]string{}
 	v.StickerImages = map[string]string{}
 	v.Preview = ""
+	v.PhotoThumbnails = map[string]PhotoThumbnail{}
 }
 func (e *Engine) loseAuthentication() {
 	e.resetIdentity()
@@ -364,6 +378,7 @@ func (e *Engine) stopJobs() {
 	}
 	e.resourceCtx, e.resourceCancel = context.WithCancel(e.ctx)
 	e.stickerCtx, e.stickerCancel = context.WithCancel(e.resourceCtx)
+	e.resetPhotos()
 	if e.watchCancel != nil {
 		e.watchCancel()
 		e.watchCancel = nil
@@ -442,7 +457,7 @@ func (e *Engine) Handle(c Command) {
 	if e.disposed {
 		return
 	}
-	if e.inflight >= 32 && c.Action != "locale" && c.Action != "mode" && c.Action != "login-cancel" && c.Action != "file-cancel" && c.Action != "preview-close" {
+	if e.inflight >= 32 && c.Action != "locale" && c.Action != "mode" && c.Action != "login-cancel" && c.Action != "file-cancel" && c.Action != "preview-close" && c.Action != "photos-hide" {
 		return
 	}
 	switch c.Action {
@@ -465,6 +480,8 @@ func (e *Engine) Handle(c Command) {
 		e.draft(c)
 	case "send":
 		e.send(c)
+	case "photos-visible", "photos-hide", "photo-retry":
+		e.photos(c)
 	case "notifications":
 		e.state.Notifications = c.Enabled
 	case "focus":
@@ -545,7 +562,7 @@ func (e *Engine) demo() {
 	rows[3].Text = "カフェの写真"
 	rows[3].ContentType = 1
 	rows[3].Downloadable = true
-	rows[3].FileName = "cafe.png"
+	rows[3].FileName = "fictional-cafe.jpg"
 	rows[4].ReplyTo = "104"
 	e.demoMessages["demo-0"] = rows
 	e.state.SelectedID = "demo-0"
@@ -697,6 +714,7 @@ func (e *Engine) selectChat(id string) {
 	if e.state.Login.Active || e.pending || !slices.ContainsFunc(e.state.Chats, func(c Chat) bool { return c.ID == id }) {
 		return
 	}
+	e.resetPhotos()
 	changed := e.state.SelectedID != id
 	if changed {
 		e.fileGeneration++

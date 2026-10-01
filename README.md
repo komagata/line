@@ -151,3 +151,5 @@ omarchy-shell shell summon io.github.komagata.line '{"demo":true}'
 `build/plugin/` contains QML, the manifest, licenses and provenance, and the statically linked `bin/line-gui`. The build uses `CGO_ENABLED=0`, `-trimpath`, and `-buildvcs=false`. Tests include Go race, vet, and crypto tests, QtTest, and local HTTP verification of message rendering.
 
 See [source and dependency provenance](docs/go-source-provenance.txt). License documents for upstream sources, generated code and data, the Go standard library, and runtime dependencies are included in the distributed artifact's NOTICE.
+
+Received photos load inline when visible (up to 8 queued requests and 2 downloads at once). PNG/JPEG originals up to 20 MiB, 8192 pixels per side and 32 megapixels are re-encoded to thumbnails of at most 512 pixels and 64 KiB. Thumbnails stay in memory within a 512 KiB budget and are cleared when the panel closes or the conversation/account changes. Failed or evicted photos require an explicit retry; the message menu retains preview and save actions. Animated/sound stickers display a still image when supported; unsupported or missing sticker metadata shows a readable fallback.

@@ -1,5 +1,8 @@
 // Only application-authored labels are passed to this helper. Never pass user content.
 var english = {
+    "写真を表示できません。再試行するか、メニューから保存してください":"Photo unavailable. Retry or save from the message menu",
+    "写真を読み込んでいます…":"Loading photo…",
+    "再試行":"Retry",
     "自分": "Me",
  "自": "M",
  "選択":"Choose",

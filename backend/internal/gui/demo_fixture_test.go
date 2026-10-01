@@ -16,7 +16,13 @@ func TestExportDemoFixture(t *testing.T) {
 	e := NewEngine(Operations{}, nil)
 	defer e.Close()
 	e.Handle(Command{Action: "mode", Mode: "demo"})
+	v := e.View()
+	e.Handle(Command{Action: "photos-visible", ID: v.SelectedID, Session: v.Session, Selection: v.Selection, MessageIDs: []string{"104"}})
+	e.Wait()
 	ja := e.View()
+	if ja.PhotoThumbnails["104"].Status != "ready" || ja.StickerImages["1001"] == "" {
+		t.Fatal("demo media did not reach sanitized image state")
+	}
 	e.Handle(Command{Action: "locale", Text: "en"})
 	en := e.View()
 	ja.Session = "fictional-preview"

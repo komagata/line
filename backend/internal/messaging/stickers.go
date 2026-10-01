@@ -53,19 +53,25 @@ type Sticker struct {
 }
 
 func projectSticker(m map[string]string) *Sticker {
+	option := m["STKOPT"]
+	// LINE's received static stickers encode the empty option as "0".
+	// Normalize only this wire representation; outbound option validation stays unchanged.
+	if option == "0" {
+		option = ""
+	}
 	if !ValidStickerID(m["STKID"]) || (m["STKPKGID"] != "" && !ValidStickerID(m["STKPKGID"])) || (m["STKVER"] != "" && !ValidStickerID(m["STKVER"])) || (m["STKHASH"] != "" && !stickerHash.MatchString(m["STKHASH"])) {
 		return nil
 	}
 	valid := false
 	for _, v := range stickerOptions {
-		if v == m["STKOPT"] {
+		if v == option {
 			valid = true
 		}
 	}
-	if !valid || m["STKOPT"] == "T" || m["STKOPT"] == "CT" {
+	if !valid || option == "T" || option == "CT" {
 		return nil
 	}
-	return &Sticker{ID: m["STKID"], PackageID: m["STKPKGID"], Version: m["STKVER"], Option: m["STKOPT"], Hash: m["STKHASH"], Alt: stickerLabel(m["STKTXT"])}
+	return &Sticker{ID: m["STKID"], PackageID: m["STKPKGID"], Version: m["STKVER"], Option: option, Hash: m["STKHASH"], Alt: stickerLabel(m["STKTXT"])}
 }
 
 type OwnedStickerRange struct {

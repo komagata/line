@@ -80,7 +80,25 @@ Item {
         }
         return images
     }
-    function clearAvatars() { var next=Object.assign({},view);next.avatars={};next.stickerImages={};next.stickers={open:false,selected:null,products:[],items:[]};next.preview='';view=next }
+    function safePhotos(value, messages) {
+        if(!value || typeof value!=='object' || Array.isArray(value))return {}
+        var keys=Object.keys(value), images={}, bytes=2
+        if(keys.length>100)return {}
+        for(var key of keys) {
+            if(!/^[1-9][0-9]{0,19}$/.test(key) || !messages.some(m=>m.id===key && m.contentType===1))continue
+            var entry=value[key]
+            if(!entry || typeof entry!=='object' || ['loading','ready','error'].indexOf(entry.status)<0)continue
+            var data=entry.data, status=entry.status
+            if(status==='ready') {
+                if(typeof data!=='string'||data.length>87407||!/^data:image\/(png|jpeg);base64,[A-Za-z0-9+/]+={0,2}$/.test(data) || data.indexOf('data:image/png;base64,iVBORw0KGgo')!==0&&data.indexOf('data:image/jpeg;base64,/9j/')!==0){data='';status='error'}
+            } else data=''
+            bytes+=key.length+data.length+40
+            if(bytes>524288)return {}
+            images[key]={status:status,data:data}
+        }
+        return images
+    }
+    function clearAvatars() { var next=Object.assign({},view);next.avatars={};next.stickerImages={};next.stickers={open:false,selected:null,products:[],items:[]};next.preview='';next.photoThumbnails={};view=next }
     function command(value) {
         if (!alive) return
         if (!started) return
@@ -159,6 +177,7 @@ Item {
                 next.preview=typeof next.preview==='string' && next.preview.length<=2796227 && /^data:image\/(png|jpeg);base64,[A-Za-z0-9+/]+={0,2}$/.test(next.preview) && (next.preview.indexOf('data:image/png;base64,iVBORw0KGgo')===0 || next.preview.indexOf('data:image/jpeg;base64,/9j/')===0) ? next.preview : ''
                 next.avatars=loginRequested || (next.login && next.login.active) ? {} : safeAvatars(next.avatars,next.mode)
                 next.stickerImages=loginRequested || (next.login && next.login.active) ? {} : safeStickers(next.stickerImages)
+                next.photoThumbnails=loginRequested || (next.login && next.login.active) ? {} : safePhotos(next.photoThumbnails,next.messages)
                 localStatusKey='';view=next
                 modePending=false
                 if(refreshPending && started) { refreshPending=false;command({action:'refresh'}) }

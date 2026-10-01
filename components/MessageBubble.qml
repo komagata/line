@@ -9,6 +9,9 @@ Item {
     property var message: ({})
     property string imageData: ''
     property string stickerImage: ''
+    property var photo: ({})
+    signal photoRetry()
+    signal photoPreview()
     property string replyText: ''
     signal actionsRequested()
     signal linkActivated(string url)
@@ -30,7 +33,7 @@ Item {
         anchors.left: root.message.own ? undefined : avatar.right
         anchors.leftMargin: 8
         anchors.right: root.message.own ? parent.right : undefined
-        width: Math.min(root.width - (root.message.own ? 0 : 40), Math.max(root.message.sticker ? 224 : 150, body.implicitWidth + 30))
+        width: Math.min(root.width - (root.message.own ? 0 : 40), Math.max(root.message.contentType===1 ? 264 : root.message.sticker ? 224 : 150, body.implicitWidth + 30))
         height: content.height + 20
         radius: ink.radius; color: root.message.own ? ink.outgoing : ink.incoming
         Column {
@@ -41,6 +44,27 @@ Item {
                 anchors.horizontalCenter:parent.horizontalCenter
             }
             Text {objectName:'stickerFallback-'+(root.message.id||'');width:parent.width;visible:!!root.message.sticker && stickerPoster.status!==Image.Ready;text:root.tr('スタンプ画像を表示できません（読み込み中または未対応）');textFormat:Text.PlainText;wrapMode:Text.Wrap;color:ink.muted;font.pixelSize:12}
+            StickerImage {
+                id:photoPoster;objectName:'receivedPhoto-'+(root.message.id||'')
+                visible:root.message.contentType===1
+                width:Math.min(240,parent.width)
+                height:visible ? (status===Image.Ready && implicitWidth>0 ? Math.min(220,width*implicitHeight/implicitWidth) : 144) : 0
+                anchors.horizontalCenter:parent.horizontalCenter
+                imageData:root.photo.data || ''
+                TapHandler { enabled:photoPoster.status===Image.Ready;onTapped:root.photoPreview() }
+                HoverHandler { cursorShape:Qt.PointingHandCursor }
+            }
+            Text {
+                objectName:'photoFallback-'+(root.message.id||'');width:parent.width
+                visible:root.message.contentType===1 && photoPoster.status!==Image.Ready
+                text:root.photo.status==='error' || (root.photo.status==='ready' && photoPoster.status!==Image.Loading) ? root.tr('写真を表示できません。再試行するか、メニューから保存してください') : root.tr('写真を読み込んでいます…')
+                textFormat:Text.PlainText;wrapMode:Text.Wrap;color:ink.muted;font.pixelSize:12
+            }
+            ActionButton {
+                objectName:'photoRetry-'+(root.message.id||'');visible:root.message.contentType===1 && (root.photo.status==='error' || root.photo.status==='ready' && photoPoster.status!==Image.Ready && photoPoster.status!==Image.Loading)
+                text:root.tr('再試行');onClicked:root.photoRetry()
+            }
+            Text {width:parent.width;visible:root.message.contentType===7 && !root.message.sticker;text:root.tr('スタンプ画像を表示できません（読み込み中または未対応）');textFormat:Text.PlainText;wrapMode:Text.Wrap;color:ink.muted;font.pixelSize:12}
             TextEdit {
                 id:body;objectName:'messageText-'+(root.message.id||'')
                 width:parent.width;readOnly:true;selectByMouse:true;activeFocusOnTab:true

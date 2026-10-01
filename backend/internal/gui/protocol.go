@@ -100,6 +100,26 @@ func (w *Writer) Publish(v View) error {
 		}
 	}
 	if len(frame)+1 > MaxFrame {
+		photos := make(map[string]PhotoThumbnail, len(v.PhotoThumbnails))
+		for id, p := range v.PhotoThumbnails {
+			photos[id] = p
+		}
+		v.PhotoThumbnails = photos
+		for id, p := range photos {
+			if p.Data == "" {
+				continue
+			}
+			photos[id] = PhotoThumbnail{Status: "error"}
+			frame, err = encode(v)
+			if err != nil {
+				return err
+			}
+			if len(frame)+1 <= MaxFrame {
+				break
+			}
+		}
+	}
+	if len(frame)+1 > MaxFrame {
 		images := make(map[string]string, len(v.StickerImages))
 		for k, data := range v.StickerImages {
 			images[k] = data

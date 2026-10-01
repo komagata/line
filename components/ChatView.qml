@@ -12,8 +12,8 @@ Rectangle {
     property var service: null
     readonly property var view: service ? service.view : ({chats:[],messages:[],selectedId:'',draft:'',mode:'live',status:'idle',account:{name:root.tr('自分')}})
     property bool appVisible: true
-    onAppVisibleChanged: if(!appVisible)closeTransient()
-    onVisibleChanged: if(!visible)closeTransient()
+    onAppVisibleChanged: {if(!appVisible)closeTransient();photoRequestTimer.restart()}
+    onVisibleChanged: {if(!visible)closeTransient();photoRequestTimer.restart()}
     property bool windowFocused: false
     readonly property bool conversationFocused: appVisible && visible && windowFocused && !settingsOpen
     onConversationFocusedChanged: reportFocus()
@@ -80,7 +80,7 @@ Rectangle {
         // an old file or message action. Keep drafts and staged files intact.
         actionContext=null;actionMessage={};attachmentContext=null;saveContext=null;contactContext=null
         previewSuppressed=true
-        if(cancelFiles!==false){perform('file-cancel',{},fileContext||capture());perform('sticker-hide',{},capture())}
+        if(cancelFiles!==false){perform('file-cancel',{},fileContext||capture());perform('sticker-hide',{},capture());perform('photos-hide',{},capture());photoRequestKey=''}
         fileContext=null
         actions.close();unsendDialog.close();attachDialog.close();saveDialog.close();contactPicker.close();previewDialog.close()
         messageSearchOpen=false;messageQuery='';contactQuery='';copiedText='';clipboard.text=''
@@ -90,7 +90,7 @@ Rectangle {
     function openLink(url){if(MessageLinks.valid(url))Qt.openUrlExternally(url)}
     property bool settingsOpen: false
     function cancelActiveLogin() { if (service && (service.loginRequested===true || view.login && view.login.active)) service.cancelLogin() }
-    onSettingsOpenChanged: { if (!settingsOpen) cancelActiveLogin();else closeTransient() }
+    onSettingsOpenChanged: { if (!settingsOpen) cancelActiveLogin();else closeTransient();photoRequestTimer.restart() }
     property string searchText: ''
     readonly property var filteredChats: (view.chats || []).filter(c => c.name.toLocaleLowerCase().indexOf(searchText.toLocaleLowerCase()) >= 0)
     readonly property var selected: (view.chats || []).find(c => c.id === view.selectedId) || ({name:'',group:false})
@@ -106,6 +106,26 @@ Rectangle {
     focus: true
     Keys.onEscapePressed: { if(messageSearchOpen)closeMessageSearch();else root.dismiss() }
     Shortcut {sequence:'Ctrl+F';enabled:root.visible && !root.settingsOpen;onActivated:root.openMessageSearch()}
+    property string photoRequestKey: ''
+    function requestVisiblePhotos() {
+        if(!appVisible || !visible || settingsOpen || !view.selectedId || view.login && view.login.active)return
+        var ids=[]
+        // Inspect instantiated delegates, then intersect with the viewport.
+        // ListView can instantiate offscreen delegates while laying out history.
+        var children=messages.contentItem.children
+        for(var i=0;i<children.length && ids.length<8;i++) {
+            var row=children[i]
+            if(row.record && row.record.contentType===1 && row.y+row.height>messages.contentY && row.y<messages.contentY+messages.height)ids.push(row.record.id)
+        }
+        if(!ids.length && !photoRequestKey)return
+        ids.sort()
+        var key=contextKey+'/'+view.status+'/'+ids.join(',')
+        if(key===photoRequestKey)return
+        photoRequestKey=key
+        perform('photos-visible',{messageIds:ids},capture())
+    }
+    Timer {id:photoRequestTimer;interval:80;onTriggered:root.requestVisiblePhotos()}
+    function photoFor(id) {return (view.photoThumbnails||{})[id] || ({})}
     function stickerFor(s) {return s ? ((view.stickerImages||{})[s.id+(s.hash?'-'+s.hash:'')]||'') : ''}
     function avatarFor(id) { var images=view.avatars || {}; return typeof id==='string' && Object.prototype.hasOwnProperty.call(images,id) ? images[id] : '' }
     function selectChat(id) { if (service) service.selectChat(id) }
@@ -136,12 +156,13 @@ Rectangle {
         var key=String(view.session)+'/'+String(view.selection)+'/'+view.selectedId
         if(key!==contextKey){closeTransient(false);messageSearchOpen=false;messageQuery='';contextKey=key;reportFocus()}
         syncMessages()
+        photoRequestTimer.restart()
         var completed=!!(view.login && view.login.stage==='success' && view.status==='ready')
         if(completed && !loginReady) settingsOpen=false
         loginReady=completed
         if(actionContext && current(actionContext)){var active=(view.messages||[]).find(m=>m.id===actionContext.messageId);if(active)actionMessage=Object.assign({},active)}
     }
-    Component.onCompleted: syncMessages()
+    Component.onCompleted: {syncMessages();photoRequestTimer.restart()}
     ListModel { id: history; dynamicRoles:true }
     Item {
         anchors.fill: parent; anchors.margins: 1
@@ -277,6 +298,9 @@ Rectangle {
                 anchors.leftMargin:22;anchors.rightMargin:22;anchors.topMargin:14;anchors.bottomMargin:8
                 model:history;clip:true;spacing:4;boundsBehavior:Flickable.StopAtBounds
                 onMovementEnded:root.followBottom=atYEnd
+                onContentYChanged:photoRequestTimer.restart()
+                onHeightChanged:photoRequestTimer.restart()
+                onContentHeightChanged:{photoRequestTimer.restart();if(root.followBottom)Qt.callLater(function(){messages.positionViewAtEnd()})}
                 ScrollBar.vertical: ScrollBar { onActiveChanged:if (!active) root.followBottom=messages.atYEnd }
                 delegate: Column {
                     id:messageRow
@@ -291,7 +315,7 @@ Rectangle {
                         }
                     }
                     MessageBubble {
-                language:root.language; width:parent.width;message:messageRow.record;replyText:root.quoteFor(messageRow.record);imageData:root.avatarFor(messageRow.record.senderId);stickerImage:root.stickerFor(messageRow.record.sticker);onActionsRequested:root.openActions(messageRow.record);onLinkActivated:url=>root.openLink(url) }
+                language:root.language; width:parent.width;message:messageRow.record;replyText:root.quoteFor(messageRow.record);imageData:root.avatarFor(messageRow.record.senderId);stickerImage:root.stickerFor(messageRow.record.sticker);photo:root.photoFor(messageRow.record.id);onPhotoRetry:root.perform('photo-retry',{},root.capture(messageRow.record.id));onPhotoPreview:root.perform('preview',{},root.capture(messageRow.record.id));onActionsRequested:root.openActions(messageRow.record);onLinkActivated:url=>root.openLink(url) }
                 }
             }
             Column {

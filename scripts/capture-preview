@@ -22,4 +22,4 @@ PY
 HOME="$capture_home" XDG_CONFIG_HOME="$capture_home/config" XDG_DATA_HOME="$capture_home/data" XDG_CACHE_HOME="$capture_home/cache" \
 QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software QT_QUICK_CONTROLS_STYLE=Basic QT_QPA_PLATFORMTHEME=generic \
 qmltestrunner -input "$capture_home/qml" -import "$root/tests/qml/imports" -o -,txt
-printf 'Offscreen English UI captures: %s/{chat,settings}-{1200x760,720x540}.png\n' "$output"
+printf 'Offscreen English UI captures: %s/{chat,media,photo,sticker,settings}-{1200x760,720x540}.png\n' "$output"

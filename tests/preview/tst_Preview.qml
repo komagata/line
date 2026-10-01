@@ -14,6 +14,7 @@ TestCase {
   tryVerify(function(){return done},5000);verify(saved)
  }
  function test_capture_actual_chat_and_settings() {
+  service.startupPending=false // Injected frames; no real backend process in this harness.
   service.setMode('demo');service.setLanguage('ja')
   service.consume(JSON.stringify({type:'state',view:Fixture.states.ja})+'\n')
   chat.settingsOpen=true
@@ -35,9 +36,20 @@ TestCase {
    chat.settingsOpen=false;waitForRendering(chat)
    tryVerify(function(){return findChild(chat,'chatAvatar-demo-0').imageReady && findChild(chat,'selfAvatar').imageReady && findChild(chat,'headerAvatar').imageReady},5000)
    var composer=findChild(chat,'composer');verify(composer.width>300);verify(composer.y+composer.height<=chat.height)
-   tryVerify(function(){return findChild(chat,'messageText-105')!==null})
    var list=findChild(chat,'messageList')
    tryVerify(function(){list.forceLayout();list.positionViewAtEnd();var last=findChild(chat,'messageText-105');return last && last.mapToItem(chat,0,last.height).y<=composer.y && last.mapToItem(chat,0,0).y>=list.mapToItem(chat,0,0).y},5000)
+   chat.followBottom=false;list.positionViewAtIndex(2,ListView.Center);wait(50)
+   tryCompare(findChild(chat,'receivedSticker-103'),'status',Image.Ready)
+   snapshot('__OUTPUT__/sticker-'+size.width+'x'+size.height+'.png')
+   chat.followBottom=false;list.positionViewAtIndex(3,ListView.Center);wait(50)
+   tryCompare(findChild(chat,'receivedPhoto-104'),'status',Image.Ready)
+   waitForRendering(chat)
+   var photo=findChild(chat,'receivedPhoto-104'),top=photo.mapToItem(list,0,0).y
+   verify(top>=0 && top+photo.height<=list.height)
+   snapshot('__OUTPUT__/photo-'+size.width+'x'+size.height+'.png')
+   chat.followBottom=false;list.positionViewAtIndex(2,ListView.Beginning);wait(50)
+   waitForRendering(chat)
+   snapshot('__OUTPUT__/media-'+size.width+'x'+size.height+'.png')
    list.positionViewAtBeginning()
    tryVerify(function(){var first=findChild(chat,'messageText-101');return first && first.mapToItem(chat,0,0).y>=list.mapToItem(chat,0,0).y},5000)
    waitForRendering(chat)

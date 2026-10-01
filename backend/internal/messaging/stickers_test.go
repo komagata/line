@@ -231,3 +231,64 @@ func TestStickerExpiryRecheckedAfterBlockedContactRead(t *testing.T) {
 		t.Fatal("sticker expired during read was sent")
 	}
 }
+
+func TestReceivedStickerMarkerWithoutCiphertext(t *testing.T) {
+	c, _, _ := stickerSetup(t)
+	raw := &line.Message{ID: "123", ContentType: 7, ContentMetadata: map[string]string{"STKID": "1001", "STKPKGID": "1", "STKVER": "1", "e2eeVersion": "2", "STKTXT": "Fictional sticker", "ENC_KM": "private-placeholder"}}
+	got := c.Decode("u-peer", raw)
+	if got.Sticker == nil || got.Status != "sticker" || got.Encrypted {
+		t.Fatal("clear sticker metadata with marker lost before GUI projection")
+	}
+	encoded, _ := json.Marshal(got)
+	if strings.Contains(string(encoded), "private-placeholder") || strings.Contains(string(encoded), "e2eeVersion") {
+		t.Fatal("raw metadata leaked")
+	}
+	raw.Chunks = []string{"ciphertext-placeholder"}
+	if c.Decode("u-peer", raw).Sticker != nil {
+		t.Fatal("encrypted chunks must remain unsupported")
+	}
+}
+
+func TestReceivedStaticStickerZeroOptionWithoutChunks(t *testing.T) {
+	c, _, _ := stickerSetup(t)
+	raw := &line.Message{ID: "123", ContentType: 7, ContentMetadata: map[string]string{"STKID": "1001", "STKPKGID": "2001", "STKVER": "3", "STKOPT": "0"}}
+	got := c.Decode("u-peer", raw)
+	if got.Sticker == nil || got.Sticker.Option != "" || got.Status != "sticker" || got.Encrypted {
+		t.Fatalf("static sticker option was not safely normalized: %+v", got)
+	}
+	for _, opt := range []string{"1", "2", "9"} {
+		raw.ContentMetadata["STKOPT"] = opt
+		if c.Decode("u-peer", raw).Sticker != nil {
+			t.Fatalf("unknown numeric option %q accepted", opt)
+		}
+	}
+}
+
+func TestReceivedStickerMarkerVariantsFailClosed(t *testing.T) {
+	c, _, _ := stickerSetup(t)
+	for _, tc := range []struct {
+		key, value string
+		want       bool
+	}{
+		{"STKID", "1001", true}, {"STKPKGID", "", true}, {"STKVER", "", true}, {"STKOPT", "AS", true},
+		{"STKID", "0", false}, {"STKID", "18446744073709551616", false}, {"STKPKGID", "../1", false},
+		{"STKVER", "bad", false}, {"STKHASH", "https://example.org/x", false}, {"STKOPT", "T", false}, {"STKOPT", "CT", false}, {"STKOPT", "unknown", false},
+	} {
+		t.Run(tc.key+"/"+tc.value, func(t *testing.T) {
+			meta := map[string]string{"STKID": "1001", "STKPKGID": "1", "STKVER": "1", "e2eeVersion": "2", "STKTXT": "Fictional sticker"}
+			meta[tc.key] = tc.value
+			raw := &line.Message{ID: "123", ContentType: 7, ContentMetadata: meta}
+			got := c.Decode("fixture", raw)
+			if (got.Sticker != nil) != tc.want {
+				t.Fatal("unsafe receive metadata or supported sticker misprojected")
+			}
+			if !tc.want && got.Status != "unsupported" {
+				t.Fatal("missing failure fallback")
+			}
+		})
+	}
+	raw := &line.Message{ID: "123", ContentType: 7, ContentMetadata: map[string]string{"e2eeVersion": "2"}}
+	if got := c.Decode("fixture", raw); got.Sticker != nil || got.Status != "unsupported" {
+		t.Fatal("marker without safe IDs must remain unsupported")
+	}
+}
