@@ -27,18 +27,19 @@ import (
 )
 
 type Direct struct {
-	Lock    func() (func(), error)
-	Manager *session.Manager
-	mu      sync.RWMutex
-	account Account
-	names   map[string]string
+	Lock          func() (func(), error)
+	Manager       *session.Manager
+	mu            sync.RWMutex
+	account       Account
+	names         map[string]string
+	nameFallbacks map[string]bool
 }
 
 func NewDirect() *Direct {
 	return &Direct{Manager: session.NewManager(session.KeychainStore{}), Lock: session.Lock, names: map[string]string{}}
 }
 func (d *Direct) Operations() Operations {
-	return Operations{Snapshot: d.Snapshot, History: d.History, Send: d.Send, Action: d.Action, Download: d.Download, Catalog: d.Catalog, SendSticker: d.SendSticker, Login: d.Login, Watch: d.Watch, Notify: staticNotify, FetchAvatar: fetchAvatarCDN, FetchSticker: fetchStickerCDN, Profiles: d.Profiles}
+	return Operations{Snapshot: d.Snapshot, History: d.History, Send: d.Send, Action: d.Action, Download: d.Download, Catalog: d.Catalog, SendSticker: d.SendSticker, Login: d.Login, Watch: d.Watch, Notify: staticNotify, NotifyLocalized: localizedNotify, FetchAvatar: fetchAvatarCDN, FetchSticker: fetchStickerCDN, Profiles: d.Profiles}
 }
 func (d *Direct) acquire(ctx context.Context) (func(), error) {
 	for {
@@ -125,9 +126,11 @@ func (d *Direct) Snapshot(ctx context.Context) (Snapshot, error) {
 	if profile == nil || !fullID.MatchString(profile.Mid) {
 		return Snapshot{}, errors.New("invalid profile")
 	}
+	nameFallbacks := map[string]bool{}
 	result := Snapshot{Account: Account{ID: profile.Mid, Name: label(profile.DisplayName, 160)}, Pictures: map[string]string{profile.Mid: profile.PicturePath}}
 	if result.Account.Name == "" {
 		result.Account.Name = "自分"
+		result.Account.NameUnavailable = true
 	}
 	var ids []string
 	if err = manager.Do(func(api session.API) (err error) { ids, err = api.GetAllContactIds(); return }); err != nil {
@@ -195,6 +198,8 @@ func (d *Direct) Snapshot(ctx context.Context) (Snapshot, error) {
 			name := label(wrapper.Contact.EffectiveDisplayName(), 160)
 			if name == "" {
 				name = "名前未設定"
+				c.NameUnavailable = true
+				nameFallbacks[c.ID] = true
 			}
 			c.Name = name
 			result.Contacts = append(result.Contacts, *c)
@@ -236,7 +241,7 @@ func (d *Direct) Snapshot(ctx context.Context) (Snapshot, error) {
 				unread = 9999
 			}
 			name := names[box.ID]
-			result.Chats = append(result.Chats, Chat{ID: box.ID, Name: name, Group: strings.ToLower(box.ID[:1]) != "u", Unread: int(unread), UpdatedAt: updated, Time: clock(updated), Preview: "トークを開く", NameUnavailable: name == ""})
+			result.Chats = append(result.Chats, Chat{ID: box.ID, Name: name, Group: strings.ToLower(box.ID[:1]) != "u", Unread: int(unread), UpdatedAt: updated, Time: clock(updated), Preview: "トークを開く", PreviewKey: "トークを開く", NameUnavailable: name == ""})
 		}
 		if !boxes.HasNext {
 			break
@@ -307,7 +312,7 @@ func (d *Direct) Snapshot(ctx context.Context) (Snapshot, error) {
 		c := &result.Chats[i]
 		if name := names[c.ID]; name != "" {
 			c.Name = name
-			c.NameUnavailable = false
+			c.NameUnavailable = nameFallbacks[c.ID]
 		} else {
 			c.Name = c.ID
 			result.NamesPartial = true
@@ -317,6 +322,7 @@ func (d *Direct) Snapshot(ctx context.Context) (Snapshot, error) {
 	d.mu.Lock()
 	d.account = result.Account
 	d.names = names
+	d.nameFallbacks = nameFallbacks
 	d.mu.Unlock()
 	return result, nil
 }
@@ -326,7 +332,11 @@ func classify(err error) error {
 	}
 	return err
 }
-func projectMessage(raw messaging.Message, account Account, names map[string]string) Message {
+func projectMessage(raw messaging.Message, account Account, names map[string]string, fallbackMaps ...map[string]bool) Message {
+	fallback := raw.From == account.ID && account.NameUnavailable
+	if raw.From != account.ID && len(fallbackMaps) > 0 {
+		fallback = fallbackMaps[0][raw.From]
+	}
 	timestamp, _ := strconv.ParseInt(raw.CreatedTime.String(), 10, 64)
 	if timestamp < 0 {
 		timestamp = 0
@@ -361,7 +371,7 @@ func projectMessage(raw messaging.Message, account Account, names map[string]str
 		}
 	}
 	encrypted := raw.Encrypted
-	m := Message{ID: raw.ID, Text: text, SenderID: raw.From, Sender: sender, Own: raw.From == account.ID, Timestamp: timestamp, Time: clock(timestamp), Day: day(timestamp), Encrypted: &encrypted, Status: status, ReplyTo: raw.ReplyTo, ContentType: kind, Downloadable: messaging.IsDownloadable(kind), FileName: label(raw.FileName, 160), Reactions: []Reaction{}}
+	m := Message{GeneratedText: kind != 0 || status == "decryption_failed", SenderUnavailable: fallback, ID: raw.ID, Text: text, SenderID: raw.From, Sender: sender, Own: raw.From == account.ID, Timestamp: timestamp, Time: clock(timestamp), Day: day(timestamp), Encrypted: &encrypted, Status: status, ReplyTo: raw.ReplyTo, ContentType: kind, Downloadable: messaging.IsDownloadable(kind), FileName: label(raw.FileName, 160), Reactions: []Reaction{}}
 	if raw.Sticker != nil {
 		m.Sticker = &Sticker{ID: raw.Sticker.ID, PackageID: raw.Sticker.PackageID, Version: raw.Sticker.Version, Option: raw.Sticker.Option, Hash: raw.Sticker.Hash, Alt: raw.Sticker.Alt}
 	}
@@ -409,13 +419,13 @@ func (d *Direct) History(ctx context.Context, id string) ([]Message, error) {
 	}
 	out := make([]Message, 0, len(rows))
 	d.mu.RLock()
-	account, names := d.account, d.names
+	account, names, fallbacks := d.account, d.names, d.nameFallbacks
 	d.mu.RUnlock()
 	for _, r := range rows {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		out = append(out, projectMessage(r, account, names))
+		out = append(out, projectMessage(r, account, names, fallbacks))
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].Timestamp < out[j].Timestamp })
 	return out, nil
@@ -613,9 +623,10 @@ func (d *Direct) Login(ctx context.Context, confirm <-chan struct{}, emit func(L
 }
 
 type watchSink struct {
-	account  Account
-	names    map[string]string
-	callback func(WatchEvent)
+	nameFallbacks map[string]bool
+	account       Account
+	names         map[string]string
+	callback      func(WatchEvent)
 }
 
 func (w *watchSink) Write(data []byte) (int, error) {
@@ -628,7 +639,7 @@ func (w *watchSink) Write(data []byte) (int, error) {
 	}
 	out := WatchEvent{Kind: event.Event, Revision: event.Revision, ChatID: event.ChatID}
 	if event.Message != nil {
-		m := projectMessage(*event.Message, w.account, w.names)
+		m := projectMessage(*event.Message, w.account, w.names, w.nameFallbacks)
 		out.Message = &m
 	}
 	w.callback(out)
@@ -642,9 +653,9 @@ func (d *Direct) Watch(ctx context.Context, callback func(WatchEvent)) error {
 	}
 	defer unlock()
 	d.mu.RLock()
-	account, names := d.account, d.names
+	account, names, fallbacks := d.account, d.names, d.nameFallbacks
 	d.mu.RUnlock()
-	sink := &watchSink{account: account, names: names, callback: callback}
+	sink := &watchSink{account: account, names: names, nameFallbacks: fallbacks, callback: callback}
 	watcher := events.Watcher{Manager: manager, Lock: d.Lock, Out: sink, Err: io.Discard}
 	return classify(watcher.Run(ctx))
 }

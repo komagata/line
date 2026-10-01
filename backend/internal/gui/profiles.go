@@ -52,6 +52,7 @@ func (e *Engine) queueProfiles() {
 				for i := range e.state.Messages {
 					if e.state.Messages[i].SenderID == id && !e.state.Messages[i].Own {
 						e.state.Messages[i].Sender = p.Name
+						e.state.Messages[i].SenderUnavailable = false
 					}
 				}
 			}

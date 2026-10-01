@@ -1,13 +1,16 @@
 pragma ComponentBehavior: Bound
 import QtQuick
+import 'Locale.js' as Locale
 import QtQuick.Controls
 import QtQuick.Dialogs as NativeDialogs
 import 'MessageLinks.js' as MessageLinks
 
 Rectangle {
     id: root
+    readonly property string language: service && service.language === 'en' ? 'en' : 'ja'
+    function tr(value) { return Locale.text(language,value) }
     property var service: null
-    readonly property var view: service ? service.view : ({chats:[],messages:[],selectedId:'',draft:'',mode:'live',status:'idle',account:{name:'自分'}})
+    readonly property var view: service ? service.view : ({chats:[],messages:[],selectedId:'',draft:'',mode:'live',status:'idle',account:{name:root.tr('自分')}})
     property bool appVisible: true
     onAppVisibleChanged: if(!appVisible)closeTransient()
     onVisibleChanged: if(!visible)closeTransient()
@@ -82,7 +85,7 @@ Rectangle {
         actions.close();unsendDialog.close();attachDialog.close();saveDialog.close();contactPicker.close();previewDialog.close()
         messageSearchOpen=false;messageQuery='';contactQuery='';copiedText='';clipboard.text=''
     }
-    function quoteFor(record){if(!record.replyTo)return '';var original=(view.messages||[]).find(m=>m.id===record.replyTo);return original?'返信: '+original.text:'返信: 元のメッセージは表示中の100件の範囲外です'}
+    function quoteFor(record){if(!record.replyTo)return '';var original=(view.messages||[]).find(m=>m.id===record.replyTo);return original?root.tr('返信: ')+original.text:root.tr('返信: 元のメッセージは表示中の100件の範囲外です')}
     function links(text){return MessageLinks.urls(text).slice(0,8)}
     function openLink(url){if(MessageLinks.valid(url))Qt.openUrlExternally(url)}
     property bool settingsOpen: false
@@ -120,19 +123,23 @@ Rectangle {
         if (!samePrefix) history.clear()
         for (var j=0; j<rows.length; j++) {
             if (j>=history.count) history.append({record:rows[j],showDay:j===0 || rows[j].day !== rows[j-1].day})
-            else if (['text','senderId','sender','own','time','day','status','encrypted','timestamp','contentType','fileName','downloadable','replyTo'].some(field => history.get(j).record[field] !== rows[j][field]) || JSON.stringify(history.get(j).record.sticker||null) !== JSON.stringify(rows[j].sticker||null) || JSON.stringify(history.get(j).record.reactions||[]) !== JSON.stringify(rows[j].reactions||[]) || history.get(j).showDay !== (j===0 || rows[j].day !== rows[j-1].day)) {
+            else if (['text','senderId','sender','own','time','day','status','encrypted','timestamp','contentType','fileName','downloadable','replyTo','generatedText','senderUnavailable'].some(field => history.get(j).record[field] !== rows[j][field]) || JSON.stringify(history.get(j).record.sticker||null) !== JSON.stringify(rows[j].sticker||null) || JSON.stringify(history.get(j).record.reactions||[]) !== JSON.stringify(rows[j].reactions||[]) || history.get(j).showDay !== (j===0 || rows[j].day !== rows[j-1].day)) {
                 history.set(j,{record:rows[j],showDay:j===0 || rows[j].day !== rows[j-1].day}); rowsChanged=true
             }
         }
         if (shouldFollow && (changed || rowsChanged || requestedBottom)) Qt.callLater(function() { if(messages) messages.positionViewAtEnd() })
         else if (!samePrefix) Qt.callLater(function() { if(messages) messages.contentY=oldY })
     }
+    property bool loginReady: false
     property string contextKey: ''
     onViewChanged: {
         var key=String(view.session)+'/'+String(view.selection)+'/'+view.selectedId
         if(key!==contextKey){closeTransient(false);messageSearchOpen=false;messageQuery='';contextKey=key;reportFocus()}
         syncMessages()
-        if (view.login && view.login.stage==='success' && view.status==='ready') settingsOpen=false
+        var completed=!!(view.login && view.login.stage==='success' && view.status==='ready')
+        if(completed && !loginReady) settingsOpen=false
+        loginReady=completed
+        if(actionContext && current(actionContext)){var active=(view.messages||[]).find(m=>m.id===actionContext.messageId);if(active)actionMessage=Object.assign({},active)}
     }
     Component.onCompleted: syncMessages()
     ListModel { id: history; dynamicRoles:true }
@@ -148,12 +155,12 @@ Rectangle {
                 Rectangle { width:9;height:9;radius:5;anchors.verticalCenter:parent.verticalCenter;color:root.view.status==='ready'?ink.accent:ink.muted;visible:root.view.mode!=='demo' }
                 Rectangle {
                     visible:root.view.mode==='demo';width:44;height:22;radius:ink.radius;anchors.verticalCenter:parent.verticalCenter;color:ink.selected
-                    Text { anchors.centerIn:parent;text:'デモ';textFormat:Text.PlainText;color:ink.foreground;font.family:ink.family;font.pixelSize:11 }
+                    Text { anchors.centerIn:parent;text:root.tr('デモ');textFormat:Text.PlainText;color:ink.foreground;font.family:ink.family;font.pixelSize:11 }
                 }
             }
             ActionButton {
                 objectName:'settingsButton';anchors.right:parent.right;anchors.rightMargin:14;anchors.top:parent.top;anchors.topMargin:17
-                text:'';glyphOnly:true;hint:'設定';onClicked:root.settingsOpen=true
+                text:'';glyphOnly:true;hint:root.tr('設定');onClicked:root.settingsOpen=true
             }
             Rectangle {
                 id: searchBox
@@ -165,7 +172,7 @@ Rectangle {
                     id: search;objectName:'chatSearch'
                     anchors.fill:parent;anchors.leftMargin:40;anchors.rightMargin:8
                     text:root.searchText;onTextChanged:root.searchText=text
-                    maximumLength:160;placeholderText:'トークを検索';placeholderTextColor:ink.muted
+                    maximumLength:160;placeholderText:root.tr('トークを検索');placeholderTextColor:ink.muted
                     color:ink.foreground;font.family:ink.family;font.pixelSize:ink.body
                     selectByMouse:true;background:Item {}
                     padding:0
@@ -173,7 +180,7 @@ Rectangle {
             }
             ActionButton {
                 id:newChatButton;objectName:'newChatButton';anchors.left:parent.left;anchors.right:parent.right;anchors.leftMargin:18;anchors.rightMargin:18;anchors.top:searchBox.bottom;anchors.topMargin:8
-                text:'＋ 新しいトーク';hint:'読み込み済みの連絡先からトークを開く';onClicked:root.openContacts()
+                text:root.tr('＋ 新しいトーク');hint:root.tr('読み込み済みの連絡先からトークを開く');onClicked:root.openContacts()
             }
             ListView {
                 id: chats;objectName:'chatList'
@@ -189,7 +196,7 @@ Rectangle {
                     activeFocusOnTab:true
                     Keys.onReturnPressed:root.selectChat(modelData.id)
                     Keys.onSpacePressed:root.selectChat(modelData.id)
-                    Avatar { id:chatAvatar;objectName:'chatAvatar-'+chatRow.modelData.id;imageData:root.avatarFor(chatRow.modelData.id);anchors.left:parent.left;anchors.leftMargin:16;anchors.verticalCenter:parent.verticalCenter;width:sidebar.width<260?40:52;name:chatRow.modelData.name;group:chatRow.modelData.group }
+                    Avatar { language:root.language; id:chatAvatar;objectName:'chatAvatar-'+chatRow.modelData.id;imageData:root.avatarFor(chatRow.modelData.id);anchors.left:parent.left;anchors.leftMargin:16;anchors.verticalCenter:parent.verticalCenter;width:sidebar.width<260?40:52;name:chatRow.modelData.name;group:chatRow.modelData.group }
                     Text {
                         id:chatTitle
                         anchors.left:chatAvatar.right;anchors.leftMargin:16;anchors.right:rowTime.left;anchors.rightMargin:8;anchors.top:parent.top;anchors.topMargin:18
@@ -211,15 +218,15 @@ Rectangle {
                 }
                 Text {
                     anchors.centerIn:parent;width:parent.width-40;horizontalAlignment:Text.AlignHCenter;wrapMode:Text.Wrap
-                    visible:chats.count===0;text:root.searchText?'該当するトークはありません':root.view.status==='ready'?'トークはありません':'設定から接続できます'
+                    visible:chats.count===0;text:root.searchText?root.tr('該当するトークはありません'):root.view.status==='ready'?root.tr('トークはありません'):root.tr('設定から接続できます')
                     textFormat:Text.PlainText;color:ink.muted;font.family:ink.family;font.pixelSize:14
                 }
             }
             Item {
                 id:selfRow;anchors.bottom:parent.bottom;width:parent.width;height:76
                 Rectangle { x:12;width:parent.width-24;height:1;color:ink.line }
-                Avatar { id:selfAvatar;objectName:'selfAvatar';imageData:root.avatarFor((root.view.account||{}).id);anchors.left:parent.left;anchors.leftMargin:20;anchors.verticalCenter:parent.verticalCenter;width:44;self:true }
-                Text { anchors.left:selfAvatar.right;anchors.leftMargin:16;anchors.right:parent.right;anchors.rightMargin:16;anchors.verticalCenter:parent.verticalCenter;text:(root.view.account||{}).name||'自分';textFormat:Text.PlainText;color:ink.foreground;font.family:ink.family;font.pixelSize:ink.body;elide:Text.ElideRight }
+                Avatar { language:root.language; id:selfAvatar;objectName:'selfAvatar';imageData:root.avatarFor((root.view.account||{}).id);anchors.left:parent.left;anchors.leftMargin:20;anchors.verticalCenter:parent.verticalCenter;width:44;self:true }
+                Text { anchors.left:selfAvatar.right;anchors.leftMargin:16;anchors.right:parent.right;anchors.rightMargin:16;anchors.verticalCenter:parent.verticalCenter;text:(root.view.account||{}).nameUnavailable?root.tr('自分'):(root.view.account||{}).name||root.tr('自分');textFormat:Text.PlainText;color:ink.foreground;font.family:ink.family;font.pixelSize:ink.body;elide:Text.ElideRight }
             }
             Rectangle { anchors.right:parent.right;width:1;height:parent.height;color:ink.line }
         }
@@ -228,29 +235,29 @@ Rectangle {
             anchors.left:sidebar.right;anchors.right:parent.right;height:parent.height
             Item {
                 id:header;width:parent.width;height:78
-                Avatar { id:headerAvatar;objectName:'headerAvatar';imageData:root.avatarFor(root.view.selectedId);anchors.left:parent.left;anchors.leftMargin:22;anchors.verticalCenter:parent.verticalCenter;width:46;name:root.selected.name;group:root.selected.group;visible:root.view.selectedId!=='' }
+                Avatar { language:root.language; id:headerAvatar;objectName:'headerAvatar';imageData:root.avatarFor(root.view.selectedId);anchors.left:parent.left;anchors.leftMargin:22;anchors.verticalCenter:parent.verticalCenter;width:46;name:root.selected.name;group:root.selected.group;visible:root.view.selectedId!=='' }
                 Column {
                     anchors.left:headerAvatar.right;anchors.leftMargin:16;anchors.right:searchButton.left;anchors.rightMargin:12;anchors.verticalCenter:parent.verticalCenter;spacing:6
-                    Text { width:parent.width;text:root.selected.name||'トーク';textFormat:Text.PlainText;elide:Text.ElideRight;color:ink.foreground;font.family:ink.family;font.pixelSize:ink.body+3 }
+                    Text { width:parent.width;text:root.selected.name||root.tr('トーク');textFormat:Text.PlainText;elide:Text.ElideRight;color:ink.foreground;font.family:ink.family;font.pixelSize:ink.body+3 }
                     Text {
                         width:parent.width
-                        text:root.view.mode==='demo'?'架空の会話 · デモ':root.view.watching?'新着を受信中':root.view.statusText||''
+                        text:root.view.mode==='demo'?root.tr('架空の会話 · デモ'):root.view.watching?root.tr('新着を受信中'):root.view.statusText||''
                         textFormat:Text.PlainText;elide:Text.ElideRight;color:ink.muted;font.family:ink.family;font.pixelSize:12
                     }
                 }
-                ActionButton { id:searchButton;anchors.right:closeButton.left;anchors.rightMargin:12;anchors.verticalCenter:parent.verticalCenter;text:'󰍉';glyphOnly:true;objectName:'messageSearchButton';hint:'会話内を検索（読み込み済み100件）';enabled:root.view.selectedId!=='';onClicked:root.openMessageSearch() }
-                ActionButton { id:closeButton;objectName:'closeButton';anchors.right:parent.right;anchors.rightMargin:14;anchors.verticalCenter:parent.verticalCenter;text:'×';glyphOnly:true;hint:'閉じる';onClicked:root.dismiss() }
+                ActionButton { id:searchButton;anchors.right:closeButton.left;anchors.rightMargin:12;anchors.verticalCenter:parent.verticalCenter;text:'󰍉';glyphOnly:true;objectName:'messageSearchButton';hint:root.tr('会話内を検索（読み込み済み100件）');enabled:root.view.selectedId!=='';onClicked:root.openMessageSearch() }
+                ActionButton { id:closeButton;objectName:'closeButton';anchors.right:parent.right;anchors.rightMargin:14;anchors.verticalCenter:parent.verticalCenter;text:'×';glyphOnly:true;hint:root.tr('閉じる');onClicked:root.dismiss() }
                 Rectangle { anchors.bottom:parent.bottom;width:parent.width;height:1;color:ink.line }
             }
             Item {
                 id:historySearch;anchors.top:header.bottom;width:parent.width;height:root.messageSearchOpen?72:0;visible:root.messageSearchOpen
-                TextField {id:messageSearch;objectName:'messageSearch';x:14;y:4;width:parent.width-130;height:34;text:root.messageQuery;onTextChanged:{root.messageQuery=text;root.searchPosition=-1} maximumLength:160;placeholderText:'この会話内を検索';color:ink.foreground;placeholderTextColor:ink.muted;background:Rectangle{color:ink.surface;border.color:ink.line;radius:ink.radius} Keys.onEscapePressed:root.closeMessageSearch();Keys.onReturnPressed:root.navigateMatch(1)}
+                TextField {id:messageSearch;objectName:'messageSearch';x:14;y:4;width:parent.width-130;height:34;text:root.messageQuery;onTextChanged:{root.messageQuery=text;root.searchPosition=-1} maximumLength:160;placeholderText:root.tr('この会話内を検索');color:ink.foreground;placeholderTextColor:ink.muted;background:Rectangle{color:ink.surface;border.color:ink.line;radius:ink.radius} Keys.onEscapePressed:root.closeMessageSearch();Keys.onReturnPressed:root.navigateMatch(1)}
                 Row {anchors.right:parent.right;anchors.rightMargin:8;y:4;spacing:0
-                    ActionButton {text:'↑';hint:'前の検索結果';enabled:root.searchMatches.length>0;onClicked:root.navigateMatch(-1)}
-                    ActionButton {text:'↓';hint:'次の検索結果';enabled:root.searchMatches.length>0;onClicked:root.navigateMatch(1)}
-                    ActionButton {text:'×';hint:'検索を閉じる';onClicked:root.closeMessageSearch()}
+                    ActionButton {text:'↑';hint:root.tr('前の検索結果');enabled:root.searchMatches.length>0;onClicked:root.navigateMatch(-1)}
+                    ActionButton {text:'↓';hint:root.tr('次の検索結果');enabled:root.searchMatches.length>0;onClicked:root.navigateMatch(1)}
+                    ActionButton {text:'×';hint:root.tr('検索を閉じる');onClicked:root.closeMessageSearch()}
                 }
-                Text {x:16;y:44;text:!root.messageQuery?'読み込み済みの最大100件を検索':root.searchMatches.length?String(root.searchMatches.length)+'件'+(root.searchPosition>=0?' · '+(root.searchPosition+1)+'件目':''):'該当するメッセージはありません';textFormat:Text.PlainText;color:ink.muted;font.pixelSize:12}
+                Text {x:16;y:44;text:!root.messageQuery?root.tr('読み込み済みの最大100件を検索'):root.searchMatches.length?String(root.searchMatches.length)+root.tr('件')+(root.searchPosition>=0?' · '+(root.searchPosition+1)+root.tr('件目'):''):root.tr('該当するメッセージはありません');textFormat:Text.PlainText;color:ink.muted;font.pixelSize:12}
             }
             Item {
                 id:notice
@@ -259,11 +266,11 @@ Rectangle {
                 Text {
                     id:noticeText
                     x:22;y:10;width:parent.width-(cancelDownload.visible?110:44);wrapMode:Text.Wrap
-                    text:root.view.fileStatus==='pending'?'ファイルを取得しています…':root.view.contactNote||root.view.sendNote||root.view.historyNote||(root.view.status!=='ready'?root.view.statusText||'':root.view.namesPartial?'一部のトーク名を取得できませんでした':'')
+                    text:root.view.fileStatus==='pending'?root.tr('ファイルを取得しています…'):root.view.contactNote||root.view.sendNote||root.view.historyNote||(root.view.status!=='ready'?root.view.statusText||'':root.view.namesPartial?root.tr('一部のトーク名を取得できませんでした'):'')
                     textFormat:Text.PlainText;color:ink.error;font.family:ink.family;font.pixelSize:13
                 }
             }
-            ActionButton {id:cancelDownload;anchors.right:parent.right;anchors.rightMargin:12;anchors.top:notice.top;visible:root.view.fileStatus==='pending';text:'中止';onClicked:root.perform('file-cancel',{},root.capture())}
+            ActionButton {id:cancelDownload;anchors.right:parent.right;anchors.rightMargin:12;anchors.top:notice.top;visible:root.view.fileStatus==='pending';text:root.tr('中止');onClicked:root.perform('file-cancel',{},root.capture())}
             ListView {
                 id:messages;objectName:'messageList'
                 anchors.left:parent.left;anchors.right:parent.right;anchors.top:notice.bottom;anchors.bottom:composer.top
@@ -283,16 +290,18 @@ Rectangle {
                             Text { id:dateText;anchors.centerIn:parent;text:messageRow.record.day;textFormat:Text.PlainText;color:ink.muted;font.family:ink.family;font.pixelSize:13 }
                         }
                     }
-                    MessageBubble { width:parent.width;message:messageRow.record;replyText:root.quoteFor(messageRow.record);imageData:root.avatarFor(messageRow.record.senderId);stickerImage:root.stickerFor(messageRow.record.sticker);onActionsRequested:root.openActions(messageRow.record);onLinkActivated:url=>root.openLink(url) }
+                    MessageBubble {
+                language:root.language; width:parent.width;message:messageRow.record;replyText:root.quoteFor(messageRow.record);imageData:root.avatarFor(messageRow.record.senderId);stickerImage:root.stickerFor(messageRow.record.sticker);onActionsRequested:root.openActions(messageRow.record);onLinkActivated:url=>root.openLink(url) }
                 }
             }
             Column {
                 anchors.centerIn:messages;spacing:18;width:Math.min(420,parent.width-60)
                 visible:root.view.selectedId==='' || (['loading','ready'].indexOf(root.view.historyStatus)>=0 && history.count===0)
-                Text { width:parent.width;horizontalAlignment:Text.AlignHCenter;text:root.view.historyStatus==='loading'?'履歴を読み込んでいます…':root.view.selectedId?'まだメッセージはありません。下の入力欄から送信できます':'トークを選ぶか、「新しいトーク」から連絡先を選んでください';textFormat:Text.PlainText;wrapMode:Text.Wrap;color:ink.muted;font.family:ink.family;font.pixelSize:ink.body }
-                ActionButton { anchors.horizontalCenter:parent.horizontalCenter;visible:root.view.status!=='ready';text:'設定を開く';accent:true;onClicked:root.settingsOpen=true }
+                Text { width:parent.width;horizontalAlignment:Text.AlignHCenter;text:root.view.historyStatus==='loading'?root.tr('履歴を読み込んでいます…'):root.view.selectedId?root.tr('まだメッセージはありません。下の入力欄から送信できます'):root.tr('トークを選ぶか、「新しいトーク」から連絡先を選んでください');textFormat:Text.PlainText;wrapMode:Text.Wrap;color:ink.muted;font.family:ink.family;font.pixelSize:ink.body }
+                ActionButton { anchors.horizontalCenter:parent.horizontalCenter;visible:root.view.status!=='ready';text:root.tr('設定を開く');accent:true;onClicked:root.settingsOpen=true }
             }
             ChatComposer {
+                language:root.language;
                 id:composer
                 anchors.left:parent.left;anchors.right:parent.right;anchors.bottom:parent.bottom
                 height:implicitHeight
@@ -311,31 +320,32 @@ Rectangle {
         }
     }
     StickerPicker {
+                language:root.language;
         width:Math.min(600,root.width-32);height:Math.min(590,root.height-32);x:(root.width-width)/2;y:(root.height-height)/2
         visible:root.appVisible && root.visible && !root.settingsOpen && !!(root.view.stickers||{}).open
         catalog:root.view.stickers||{};images:root.view.stickerImages||{}
         onAction:(action,extra)=>root.perform(action,extra,root.capture())
     }
     TextEdit {id:clipboard;visible:false;textFormat:TextEdit.PlainText}
-    NativeDialogs.FileDialog {id:attachDialog;objectName:'attachDialog';title:'送信するファイルを選択（20 MiBまで）';options:NativeDialogs.FileDialog.DontUseNativeDialog;fileMode:NativeDialogs.FileDialog.OpenFile;onAccepted:root.acceptAttachment(selectedFile);onRejected:root.attachmentContext=null}
-    NativeDialogs.FileDialog {id:saveDialog;objectName:'saveDialog';title:'新しいファイル名で保存（既存ファイルは上書きしません）';options:NativeDialogs.FileDialog.DontUseNativeDialog;fileMode:NativeDialogs.FileDialog.SaveFile;onAccepted:root.acceptDownload(selectedFile);onRejected:root.saveContext=null}
+    NativeDialogs.FileDialog {id:attachDialog;objectName:'attachDialog';acceptLabel:root.tr('選択');rejectLabel:root.tr('キャンセル');nameFilters:[root.tr('すべてのファイル (*)')];title:root.tr('送信するファイルを選択（20 MiBまで）');options:NativeDialogs.FileDialog.DontUseNativeDialog;fileMode:NativeDialogs.FileDialog.OpenFile;onAccepted:root.acceptAttachment(selectedFile);onRejected:root.attachmentContext=null}
+    NativeDialogs.FileDialog {id:saveDialog;objectName:'saveDialog';acceptLabel:root.tr('保存');rejectLabel:root.tr('キャンセル');nameFilters:[root.tr('すべてのファイル (*)')];title:root.tr('新しいファイル名で保存（既存ファイルは上書きしません）');options:NativeDialogs.FileDialog.DontUseNativeDialog;fileMode:NativeDialogs.FileDialog.SaveFile;onAccepted:root.acceptDownload(selectedFile);onRejected:root.saveContext=null}
     Popup {
         id:contactPicker;objectName:'contactPicker';modal:true;focus:true
         width:Math.min(460,root.width-40);height:Math.min(560,root.height-40);x:(root.width-width)/2;y:(root.height-height)/2;padding:18
         background:Rectangle{color:ink.surface;radius:ink.radius;border.color:ink.line}
         onClosed:{root.contactContext=null;root.contactQuery=''}
         contentItem:Item {
-            Text {id:contactTitle;text:'新しいトーク';textFormat:Text.PlainText;color:ink.foreground;font.family:ink.family;font.pixelSize:20}
+            Text {id:contactTitle;text:root.tr('新しいトーク');textFormat:Text.PlainText;color:ink.foreground;font.family:ink.family;font.pixelSize:20}
             TextField {
                 id:contactSearch;objectName:'contactSearch';anchors.top:contactTitle.bottom;anchors.topMargin:16;width:parent.width;height:42
-                text:root.contactQuery;onTextChanged:root.contactQuery=text;maximumLength:160;placeholderText:'連絡先を検索';color:ink.foreground;placeholderTextColor:ink.muted;selectByMouse:true
+                text:root.contactQuery;onTextChanged:root.contactQuery=text;maximumLength:160;placeholderText:root.tr('連絡先を検索');color:ink.foreground;placeholderTextColor:ink.muted;selectByMouse:true
                 background:Rectangle{color:ink.surface;border.color:contactSearch.activeFocus?ink.accent:ink.line;radius:ink.radius}
                 Keys.onEscapePressed:contactPicker.close()
                 Keys.onReturnPressed:if(root.filteredContacts.length===1)root.chooseContact(root.filteredContacts[0].id)
             }
             Text {
                 id:contactHint;anchors.top:contactSearch.bottom;anchors.topMargin:10;width:parent.width;wrapMode:Text.Wrap;textFormat:Text.PlainText;color:ink.muted;font.pixelSize:12
-                text:root.view.contactsStatus==='loading'?'連絡先を読み込んでいます…':root.view.contactsStatus==='error'?'連絡先を取得できませんでした。設定から再読み込みしてください':root.view.contactsStatus!=='ready'?'設定から接続すると連絡先を選べます':!root.canStartChat?'処理が終わってから選択してください':root.filteredContacts.length?'読み込み済みの連絡先（最大500件）。選ぶだけでは送信しません':root.contactQuery?'該当する連絡先はありません':'読み込み済みの連絡先はありません'
+                text:root.view.contactsStatus==='loading'?root.tr('連絡先を読み込んでいます…'):root.view.contactsStatus==='error'?root.tr('連絡先を取得できませんでした。設定から再読み込みしてください'):root.view.contactsStatus!=='ready'?root.tr('設定から接続すると連絡先を選べます'):!root.canStartChat?root.tr('処理が終わってから選択してください'):root.filteredContacts.length?root.tr('読み込み済みの連絡先（最大500件）。選ぶだけでは送信しません'):root.contactQuery?root.tr('該当する連絡先はありません'):root.tr('読み込み済みの連絡先はありません')
             }
             ListView {
                 id:contactList;objectName:'contactList';anchors.top:contactHint.bottom;anchors.topMargin:10;anchors.bottom:contactCancel.top;anchors.bottomMargin:8;width:parent.width;clip:true;spacing:4;model:root.filteredContacts;boundsBehavior:Flickable.StopAtBounds
@@ -345,13 +355,13 @@ Rectangle {
                     Keys.onReturnPressed:root.chooseContact(modelData.id)
                     Keys.onSpacePressed:root.chooseContact(modelData.id)
                     Keys.onEscapePressed:contactPicker.close()
-                    Avatar{id:contactAvatar;objectName:'contactAvatar-'+contactRow.modelData.id;x:8;anchors.verticalCenter:parent.verticalCenter;width:40;name:contactRow.modelData.name;imageData:root.avatarFor(contactRow.modelData.id)}
+                    Avatar{language:root.language;id:contactAvatar;objectName:'contactAvatar-'+contactRow.modelData.id;x:8;anchors.verticalCenter:parent.verticalCenter;width:40;name:contactRow.modelData.name;imageData:root.avatarFor(contactRow.modelData.id)}
                     Text {anchors.left:contactAvatar.right;anchors.leftMargin:14;anchors.right:parent.right;anchors.rightMargin:8;anchors.verticalCenter:parent.verticalCenter;text:contactRow.modelData.name;textFormat:Text.PlainText;elide:Text.ElideRight;color:ink.foreground;font.family:ink.family;font.pixelSize:ink.body}
                     MouseArea{id:contactMouse;anchors.fill:parent;hoverEnabled:true;cursorShape:Qt.PointingHandCursor;onClicked:root.chooseContact(contactRow.modelData.id)}
                     Accessible.role:Accessible.ListItem;Accessible.name:modelData.name;Accessible.onPressAction:root.chooseContact(modelData.id)
                 }
             }
-            ActionButton{id:contactCancel;objectName:'contactCancel';anchors.bottom:parent.bottom;anchors.right:parent.right;text:'キャンセル';onClicked:contactPicker.close()}
+            ActionButton{id:contactCancel;objectName:'contactCancel';anchors.bottom:parent.bottom;anchors.right:parent.right;text:root.tr('キャンセル');onClicked:contactPicker.close()}
         }
     }
     Popup {
@@ -361,23 +371,23 @@ Rectangle {
             Column {id:menuContent;width:parent.width;spacing:4
                 Text {width:parent.width;text:root.actionMessage.text||'';textFormat:Text.PlainText;color:ink.muted;elide:Text.ElideRight;font.pixelSize:13}
                 Flow {width:parent.width;spacing:6
-                    ActionButton{text:'返信';enabled:root.view.sendStatus!=='pending';onClicked:root.chooseAction('reply')}
-                    ActionButton{text:'コピー';onClicked:root.chooseAction('copy')}
-                    ActionButton{text:'保存';visible:!!root.actionMessage.downloadable;enabled:root.view.fileStatus!=='pending';onClicked:root.chooseAction('download')}
-                    ActionButton{text:'画像を見る';visible:root.actionMessage.contentType===1;enabled:root.view.fileStatus!=='pending';onClicked:root.chooseAction('preview')}
+                    ActionButton{text:root.tr('返信');enabled:root.view.sendStatus!=='pending';onClicked:root.chooseAction('reply')}
+                    ActionButton{text:root.tr('コピー');onClicked:root.chooseAction('copy')}
+                    ActionButton{text:root.tr('保存');visible:!!root.actionMessage.downloadable;enabled:root.view.fileStatus!=='pending';onClicked:root.chooseAction('download')}
+                    ActionButton{text:root.tr('画像を見る');visible:root.actionMessage.contentType===1;enabled:root.view.fileStatus!=='pending';onClicked:root.chooseAction('preview')}
                 }
-                Text {text:'リアクション';textFormat:Text.PlainText;color:ink.muted;font.pixelSize:12}
+                Text {text:root.tr('リアクション');textFormat:Text.PlainText;color:ink.muted;font.pixelSize:12}
                 Flow {width:parent.width;spacing:2
                     Repeater {model:[{name:'like',label:'👍'},{name:'love',label:'♥'},{name:'laugh',label:'😆'},{name:'surprise',label:'😮'},{name:'sad',label:'😢'},{name:'angry',label:'😡'}]
                         ActionButton {required property var modelData;text:modelData.label;enabled:root.view.sendStatus!=='pending';onClicked:root.chooseAction('react',{reaction:modelData.name})}
                     }
                 }
-                ActionButton {text:'自分のリアクションを削除';enabled:root.view.sendStatus!=='pending';onClicked:root.chooseAction('react',{remove:true})}
+                ActionButton {text:root.tr('自分のリアクションを削除');enabled:root.view.sendStatus!=='pending';onClicked:root.chooseAction('react',{remove:true})}
                 Repeater {model:root.links(root.actionMessage.text||'')
-                    ActionButton {required property string modelData;width:menuContent.width;text:modelData;hint:'選択したHTTP(S)リンクをブラウザで開く';onClicked:root.openLink(modelData)}
+                    ActionButton {required property string modelData;width:menuContent.width;text:modelData;hint:root.tr('選択したHTTP(S)リンクをブラウザで開く');onClicked:root.openLink(modelData)}
                 }
-                ActionButton {text:'送信を取り消す…';visible:root.actionMessage.own===true;enabled:root.view.sendStatus!=='pending';onClicked:root.chooseAction('unsend')}
-                ActionButton {text:'閉じる';onClicked:actions.close()}
+                ActionButton {text:root.tr('送信を取り消す…');visible:root.actionMessage.own===true;enabled:root.view.sendStatus!=='pending';onClicked:root.chooseAction('unsend')}
+                ActionButton {text:root.tr('閉じる');onClicked:actions.close()}
             }
         }
     }
@@ -385,9 +395,9 @@ Rectangle {
         id:unsendDialog;modal:true;focus:true;width:Math.min(420,root.width-40);height:confirmContent.implicitHeight+32;x:(root.width-width)/2;y:(root.height-height)/2;padding:16
         background:Rectangle{color:ink.surface;radius:ink.radius;border.color:ink.line}
         contentItem:Column{id:confirmContent;spacing:16
-            Text {width:parent.width;text:'このメッセージの送信を取り消しますか？';textFormat:Text.PlainText;wrapMode:Text.Wrap;color:ink.foreground}
+            Text {width:parent.width;text:root.tr('このメッセージの送信を取り消しますか？');textFormat:Text.PlainText;wrapMode:Text.Wrap;color:ink.foreground}
             Text {width:parent.width;text:root.actionMessage.text||'';textFormat:Text.PlainText;wrapMode:Text.Wrap;maximumLineCount:4;elide:Text.ElideRight;color:ink.muted}
-            Row {spacing:12;ActionButton{text:'キャンセル';onClicked:unsendDialog.close()} ActionButton{objectName:'confirmUnsend';text:'送信を取り消す';onClicked:root.confirmUnsend()}}
+            Row {spacing:12;ActionButton{text:root.tr('キャンセル');onClicked:unsendDialog.close()} ActionButton{objectName:'confirmUnsend';text:root.tr('送信を取り消す');onClicked:root.confirmUnsend()}}
         }
     }
     Popup {
@@ -395,7 +405,7 @@ Rectangle {
         background:Rectangle{color:ink.surface;radius:ink.radius;border.color:ink.line}
         onClosed:if(!root.previewSuppressed && root.view.preview){root.previewSuppressed=true;root.perform('preview-close',{},root.fileContext||root.capture())}
         Image {objectName:'attachmentPreviewImage';anchors.fill:parent;anchors.bottomMargin:48;source:typeof root.view.preview==='string' && /^data:image\/(png|jpeg);base64,[A-Za-z0-9+/]+={0,2}$/.test(root.view.preview) && root.view.preview.length<=2796227 ? root.view.preview : '';sourceSize:Qt.size(1024,1024);fillMode:Image.PreserveAspectFit;cache:false}
-        ActionButton{anchors.bottom:parent.bottom;anchors.horizontalCenter:parent.horizontalCenter;text:'閉じる';onClicked:{root.previewSuppressed=true;root.perform('preview-close',{},root.fileContext||root.capture())}}
+        ActionButton{anchors.bottom:parent.bottom;anchors.horizontalCenter:parent.horizontalCenter;text:root.tr('閉じる');onClicked:{root.previewSuppressed=true;root.perform('preview-close',{},root.fileContext||root.capture())}}
     }
     SetupView {
         anchors.fill:parent;anchors.margins:1;visible:root.settingsOpen;service:root.service

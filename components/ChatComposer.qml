@@ -1,8 +1,11 @@
 import QtQuick
+import 'Locale.js' as Locale
 import QtQuick.Controls
 
 Item {
     id: root
+    property string language: 'ja'
+    function tr(value) { return Locale.text(language,value) }
     objectName: 'composer'
     property string draft: ''
     property var reply: null
@@ -42,19 +45,19 @@ Item {
         x:16;y:4;width:parent.width-32
         Item {
             objectName:'replySummary';width:parent.width;height:visible?38:0;visible:!!root.reply
-            Text {anchors.left:parent.left;anchors.right:cancelReplyButton.left;anchors.verticalCenter:parent.verticalCenter;text:root.reply?'返信: '+root.reply.text:'';textFormat:Text.PlainText;elide:Text.ElideRight;color:ink.muted;font.pixelSize:13}
-            ActionButton {id:cancelReplyButton;anchors.right:parent.right;text:'×';hint:'返信を解除';enabled:!root.pending;onClicked:root.cancelReply()}
+            Text {anchors.left:parent.left;anchors.right:cancelReplyButton.left;anchors.verticalCenter:parent.verticalCenter;text:root.reply?root.tr('返信: ')+root.reply.text:'';textFormat:Text.PlainText;elide:Text.ElideRight;color:ink.muted;font.pixelSize:13}
+            ActionButton {id:cancelReplyButton;anchors.right:parent.right;text:'×';hint:root.tr('返信を解除');enabled:!root.pending;onClicked:root.cancelReply()}
         }
         Item {
             objectName:'attachmentSummary';width:parent.width;height:visible?40:0;visible:!!root.attachmentInfo
             Text {anchors.left:parent.left;anchors.right:cancelFileButton.left;anchors.verticalCenter:parent.verticalCenter;text:root.attachmentInfo?root.attachmentInfo.name+' ('+Math.ceil(root.attachmentInfo.size/1024)+' KiB)':'';textFormat:Text.PlainText;elide:Text.ElideRight;color:ink.foreground;font.pixelSize:13}
-            ActionButton {id:cancelFileButton;anchors.right:parent.right;text:'×';hint:'添付を解除';enabled:!root.pending;onClicked:root.cancelAttachment()}
+            ActionButton {id:cancelFileButton;anchors.right:parent.right;text:'×';hint:root.tr('添付を解除');enabled:!root.pending;onClicked:root.cancelAttachment()}
         }
         Item {
             objectName:'stickerSummary';width:parent.width;height:visible?88:0;visible:!!root.stickerInfo
             StickerImage {id:stage;objectName:'stagedStickerImage';width:76;height:76;imageData:root.stickerImage}
-            Text {anchors.left:stage.right;anchors.leftMargin:10;anchors.right:cancelStickerButton.left;anchors.verticalCenter:parent.verticalCenter;text:root.stickerInfo?root.stickerInfo.alt+'\n送信ボタンで送ります':'';textFormat:Text.PlainText;wrapMode:Text.Wrap;maximumLineCount:3;elide:Text.ElideRight;color:ink.foreground;font.pixelSize:13}
-            ActionButton {id:cancelStickerButton;anchors.right:parent.right;text:'×';hint:'スタンプの選択を解除';enabled:!root.pending;onClicked:root.cancelSticker()}
+            Text {anchors.left:stage.right;anchors.leftMargin:10;anchors.right:cancelStickerButton.left;anchors.verticalCenter:parent.verticalCenter;text:root.stickerInfo?root.stickerInfo.alt+root.tr('\n送信ボタンで送ります'):'';textFormat:Text.PlainText;wrapMode:Text.Wrap;maximumLineCount:3;elide:Text.ElideRight;color:ink.foreground;font.pixelSize:13}
+            ActionButton {id:cancelStickerButton;anchors.right:parent.right;text:'×';hint:root.tr('スタンプの選択を解除');enabled:!root.pending;onClicked:root.cancelSticker()}
         }
     }
     ActionButton {
@@ -62,11 +65,11 @@ Item {
         anchors.left: parent.left; anchors.leftMargin: 15
         anchors.verticalCenter: field.verticalCenter
         objectName:'attachButton';text:'＋';glyphOnly:true;enabled:root.available && !root.pending && !root.stickerInfo
-        hint:'ファイルを選択（まだ送信しません）';onClicked:root.attachRequested()
+        hint:root.tr('ファイルを選択（まだ送信しません）');onClicked:root.attachRequested()
     }
     ActionButton {
         id:stickerButton;objectName:'stickerButton';anchors.left:attachment.right;anchors.verticalCenter:field.verticalCenter
-        width:38;text:'☺';glyphOnly:true;hint:'所有スタンプを選択';enabled:root.available && !root.pending && !root.attachmentInfo;onClicked:root.stickerRequested()
+        width:38;text:'☺';glyphOnly:true;hint:root.tr('所有スタンプを選択');enabled:root.available && !root.pending && !root.attachmentInfo;onClicked:root.stickerRequested()
     }
     Rectangle {
         id: field
@@ -90,7 +93,7 @@ Item {
                 selectedTextColor: ink.foreground
                 font.family: ink.family; font.pixelSize: ink.body + 2
                 padding: 0
-                placeholderText: root.available ? 'メッセージを入力' : '接続後にメッセージを入力できます'
+                placeholderText: root.available ? root.tr('メッセージを入力') : root.tr('接続後にメッセージを入力できます')
                 placeholderTextColor: ink.muted
                 readOnly: !root.available
                 selectByMouse: true
@@ -115,14 +118,14 @@ Item {
         anchors.top: field.top
         width: 54; height: field.height
         accent: true; glyphOnly: true; text: root.pending ? '…' : '➤'
-        hint: 'メッセージを送信'
+        hint: root.tr('メッセージを送信')
         enabled: root.canSend
         onClicked: root.sendRequested(editor.text)
     }
     Text {
         anchors.left: field.left; anchors.right:parent.right;anchors.rightMargin:12; anchors.top: field.bottom; anchors.topMargin: 8
         elide:Text.ElideRight
-        text: root.stickerInfo ? (editor.text.length ? '本文を空にするとスタンプを送信できます' : 'スタンプのみ送信 · 静止画・音声なし') : root.attachmentInfo ? (editor.text.length ? '本文とファイルは別々に送信してください' : '画像も汎用ファイルとして送信 · 最大20 MiB') : 'Enterで送信 · Shift+Enterで改行'
+        text: root.stickerInfo ? (editor.text.length ? root.tr('本文を空にするとスタンプを送信できます') : root.tr('スタンプのみ送信 · 静止画・音声なし')) : root.attachmentInfo ? (editor.text.length ? root.tr('本文とファイルは別々に送信してください') : root.tr('画像も汎用ファイルとして送信 · 最大20 MiB')) : root.tr('Enterで送信 · Shift+Enterで改行')
         textFormat: Text.PlainText
         color: ink.muted; font.family: ink.family; font.pixelSize: 12
     }

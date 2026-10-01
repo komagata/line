@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# Render the actual UI with QtTest and the existing fictional backend demo.
+set -euo pipefail
+cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.."
+output=${1:-/tmp/omarchy-line-english-preview}
+mkdir -p -- "$output"
+output=$(realpath -- "$output")
+root=$(pwd)
+capture_home=$(mktemp -d /tmp/omarchy-line-preview.XXXXXX)
+trap 'rm -rf -- "$capture_home"' EXIT
+mkdir -p "$capture_home/config" "$capture_home/data" "$capture_home/cache" "$capture_home/qml"
+export GOCACHE=${GOCACHE:-/tmp/omarchy-line-gocache} GOPROXY=off GOTOOLCHAIN=local
+LINE_DEMO_FIXTURE="$capture_home/fixture.json" go -C backend test -mod=readonly ./internal/gui -run '^TestExportDemoFixture$' -count=1
+python3 - "$root" "$output" "$capture_home" <<'PY'
+import json, pathlib, sys
+root, output, home=map(pathlib.Path,sys.argv[1:])
+fixture=json.loads((home/'fixture.json').read_text())
+(home/'qml/Fixture.js').write_text('var states = '+json.dumps(fixture,ensure_ascii=False)+';\n')
+qml=(root/'tests/preview/tst_Preview.qml').read_text().replace('__ROOT__',root.as_uri()).replace('__OUTPUT__',str(output))
+(home/'qml/tst_Preview.qml').write_text(qml)
+PY
+HOME="$capture_home" XDG_CONFIG_HOME="$capture_home/config" XDG_DATA_HOME="$capture_home/data" XDG_CACHE_HOME="$capture_home/cache" \
+QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software QT_QUICK_CONTROLS_STYLE=Basic QT_QPA_PLATFORMTHEME=generic \
+qmltestrunner -input "$capture_home/qml" -import "$root/tests/qml/imports" -o -,txt
+printf 'Offscreen English UI captures: %s/{chat,settings}-{1200x760,720x540}.png\n' "$output"

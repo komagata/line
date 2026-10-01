@@ -20,6 +20,7 @@ var numericID = regexp.MustCompile(`^[1-9][0-9]{0,19}$`)
 type Command struct {
 	Action       string `json:"action"`
 	Mode         string `json:"mode,omitempty"`
+	Locale       string `json:"locale,omitempty"`
 	ID           string `json:"id,omitempty"`
 	Session      string `json:"session,omitempty"`
 	Selection    int    `json:"selection,omitempty"`
@@ -42,22 +43,29 @@ type Command struct {
 	Page         int    `json:"page,omitempty"`
 }
 type Chat struct {
-	ID              string `json:"id"`
-	Name            string `json:"name"`
-	Preview         string `json:"preview"`
-	Time            string `json:"time"`
-	Unread          int    `json:"unread"`
-	Group           bool   `json:"group"`
-	UpdatedAt       int64  `json:"updatedAt"`
-	NameUnavailable bool   `json:"nameUnavailable"`
+	PreviewMessage  *Message `json:"-"`
+	PreviewKey      string   `json:"-"`
+	DemoFixture     bool     `json:"-"`
+	ID              string   `json:"id"`
+	Name            string   `json:"name"`
+	Preview         string   `json:"preview"`
+	Time            string   `json:"time"`
+	Unread          int      `json:"unread"`
+	Group           bool     `json:"group"`
+	UpdatedAt       int64    `json:"updatedAt"`
+	NameUnavailable bool     `json:"nameUnavailable"`
 }
 type Contact struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
+	NameUnavailable bool   `json:"nameUnavailable,omitempty"`
+	DemoFixture     bool   `json:"-"`
+	ID              string `json:"id"`
+	Name            string `json:"name"`
 }
 type Account struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
+	NameUnavailable bool   `json:"nameUnavailable,omitempty"`
+	DemoFixture     bool   `json:"-"`
+	ID              string `json:"id"`
+	Name            string `json:"name"`
 }
 type Reaction struct {
 	Name  string `json:"name"`
@@ -73,22 +81,25 @@ type Sticker struct {
 	Alt       string `json:"alt"`
 }
 type Message struct {
-	ID           string     `json:"id"`
-	Text         string     `json:"text"`
-	SenderID     string     `json:"senderId"`
-	Sender       string     `json:"sender"`
-	Own          bool       `json:"own"`
-	Timestamp    int64      `json:"timestamp"`
-	Time         string     `json:"time"`
-	Day          string     `json:"day"`
-	Encrypted    *bool      `json:"encrypted"`
-	Status       string     `json:"status"`
-	ReplyTo      string     `json:"replyTo"`
-	ContentType  int        `json:"contentType"`
-	Downloadable bool       `json:"downloadable"`
-	FileName     string     `json:"fileName"`
-	Reactions    []Reaction `json:"reactions"`
-	Sticker      *Sticker   `json:"sticker"`
+	GeneratedText     bool       `json:"generatedText,omitempty"`
+	DemoFixture       bool       `json:"-"`
+	SenderUnavailable bool       `json:"senderUnavailable,omitempty"`
+	ID                string     `json:"id"`
+	Text              string     `json:"text"`
+	SenderID          string     `json:"senderId"`
+	Sender            string     `json:"sender"`
+	Own               bool       `json:"own"`
+	Timestamp         int64      `json:"timestamp"`
+	Time              string     `json:"time"`
+	Day               string     `json:"day"`
+	Encrypted         *bool      `json:"encrypted"`
+	Status            string     `json:"status"`
+	ReplyTo           string     `json:"replyTo"`
+	ContentType       int        `json:"contentType"`
+	Downloadable      bool       `json:"downloadable"`
+	FileName          string     `json:"fileName"`
+	Reactions         []Reaction `json:"reactions"`
+	Sticker           *Sticker   `json:"sticker"`
 }
 type Attachment struct {
 	ID   string `json:"id"`
@@ -97,9 +108,10 @@ type Attachment struct {
 	Data []byte `json:"-"`
 }
 type Reply struct {
-	ID     string `json:"id"`
-	Text   string `json:"text"`
-	Sender string `json:"sender"`
+	Source *Message `json:"-"`
+	ID     string   `json:"id"`
+	Text   string   `json:"text"`
+	Sender string   `json:"sender"`
 }
 type Login struct {
 	Stage      string `json:"stage"`
@@ -192,19 +204,20 @@ type LoginEvent struct {
 	Reason string
 }
 type Operations struct {
-	Snapshot     func(context.Context) (Snapshot, error)
-	History      func(context.Context, string) ([]Message, error)
-	Send         func(context.Context, string, string, string, *Attachment) (SendResult, error)
-	Action       func(context.Context, string, string, string, string, bool) (ActionResult, error)
-	Download     func(context.Context, string, string) ([]byte, error)
-	Catalog      func(context.Context) ([]OwnedProduct, error)
-	SendSticker  func(context.Context, string, string, string, string) (SendResult, error)
-	Login        func(context.Context, <-chan struct{}, func(LoginEvent) error) error
-	Watch        func(context.Context, func(WatchEvent)) error
-	Notify       func(context.Context) bool
-	FetchAvatar  func(context.Context, string) string
-	FetchSticker func(context.Context, Sticker) string
-	Profiles     func(context.Context, []string) (map[string]ProfileInfo, error)
+	Snapshot        func(context.Context) (Snapshot, error)
+	History         func(context.Context, string) ([]Message, error)
+	Send            func(context.Context, string, string, string, *Attachment) (SendResult, error)
+	Action          func(context.Context, string, string, string, string, bool) (ActionResult, error)
+	Download        func(context.Context, string, string) ([]byte, error)
+	Catalog         func(context.Context) ([]OwnedProduct, error)
+	SendSticker     func(context.Context, string, string, string, string) (SendResult, error)
+	Login           func(context.Context, <-chan struct{}, func(LoginEvent) error) error
+	Watch           func(context.Context, func(WatchEvent)) error
+	Notify          func(context.Context) bool
+	NotifyLocalized func(context.Context, string) bool
+	FetchAvatar     func(context.Context, string) string
+	FetchSticker    func(context.Context, Sticker) string
+	Profiles        func(context.Context, []string) (map[string]ProfileInfo, error)
 }
 type ProfileInfo struct {
 	Name string
@@ -227,6 +240,7 @@ type WatchEvent struct {
 }
 
 type Engine struct {
+	locale            string
 	mu                sync.Mutex
 	ops               Operations
 	emit              func(View)
@@ -295,7 +309,7 @@ func token() string {
 	return hex.EncodeToString(b)
 }
 func initial() View {
-	return View{Mode: "live", Session: token(), Status: "idle", StatusText: "準備しています…", Login: Login{Stage: "idle"}, Contacts: []Contact{}, ContactsStatus: "idle", Avatars: map[string]string{}, StickerImages: map[string]string{}, Stickers: StickerView{Status: "idle", Products: []StickerProduct{}, Items: []Sticker{}}, Chats: []Chat{}, Messages: []Message{}, Account: Account{Name: "自分"}, HistoryStatus: "idle", SendStatus: "idle", FileStatus: "idle", Notifications: true}
+	return View{Mode: "live", Session: token(), Status: "idle", StatusText: "準備しています…", Login: Login{Stage: "idle"}, Contacts: []Contact{}, ContactsStatus: "idle", Avatars: map[string]string{}, StickerImages: map[string]string{}, Stickers: StickerView{Status: "idle", Products: []StickerProduct{}, Items: []Sticker{}}, Chats: []Chat{}, Messages: []Message{}, Account: Account{Name: "自分", NameUnavailable: true}, HistoryStatus: "idle", SendStatus: "idle", FileStatus: "idle", Notifications: true}
 }
 func NewEngine(ops Operations, emit func(View)) *Engine {
 	ctx, cancel := context.WithCancel(context.Background())
@@ -303,10 +317,10 @@ func NewEngine(ops Operations, emit func(View)) *Engine {
 	stickerCtx, stickerCancel := context.WithCancel(resourceCtx)
 	return &Engine{resourceCtx: resourceCtx, resourceCancel: resourceCancel, stickerCtx: stickerCtx, stickerCancel: stickerCancel, ops: ops, emit: emit, state: initial(), ctx: ctx, cancel: cancel, drafts: map[string]string{}, replies: map[string]Reply{}, local: map[string]Chat{}, known: map[string]Contact{}, seenRevision: map[string]struct{}{}, seenMessages: map[string]struct{}{}, noticePending: map[string]time.Time{}, resyncDelay: 5 * time.Second, noticeDelay: 500 * time.Millisecond, startedAt: time.Now(), picturePaths: map[string]string{}, profileAttempted: map[string]bool{}, avatarLoading: map[string]bool{}, avatarFailed: map[string]bool{}, avatarData: map[string]string{}, stickerAttempted: map[string]bool{}, stickerData: map[string]string{}, demoMessages: map[string][]Message{}}
 }
-func (e *Engine) View() View { e.mu.Lock(); defer e.mu.Unlock(); return e.state }
+func (e *Engine) View() View { e.mu.Lock(); defer e.mu.Unlock(); return e.localizedView() }
 func (e *Engine) publish() {
 	if e.emit != nil {
-		e.emit(e.state)
+		e.emit(e.localizedView())
 	}
 }                       // caller holds mu; emit must enqueue only
 func (e *Engine) Wait() { e.wg.Wait() }
@@ -332,7 +346,7 @@ func (e *Engine) loseAuthentication() {
 	e.resetIdentity()
 	e.state.Chats = []Chat{}
 	e.state.Contacts = []Contact{}
-	e.state.Account = Account{Name: "自分"}
+	e.state.Account = Account{Name: "自分", NameUnavailable: true}
 	e.state.Status = "unauthenticated"
 	e.state.StatusText = "LINEへログインしてください"
 	e.state.ContactsStatus = "idle"
@@ -428,11 +442,18 @@ func (e *Engine) Handle(c Command) {
 	if e.disposed {
 		return
 	}
-	if e.inflight >= 32 && c.Action != "mode" && c.Action != "login-cancel" && c.Action != "file-cancel" && c.Action != "preview-close" {
+	if e.inflight >= 32 && c.Action != "locale" && c.Action != "mode" && c.Action != "login-cancel" && c.Action != "file-cancel" && c.Action != "preview-close" {
 		return
 	}
 	switch c.Action {
+	case "locale":
+		if c.Text == "ja" || c.Text == "en" {
+			e.locale = c.Text
+		}
 	case "mode":
+		if c.Locale == "ja" || c.Locale == "en" {
+			e.locale = c.Locale
+		}
 		e.mode(c.Mode)
 	case "refresh":
 		e.refresh(false)
@@ -484,29 +505,29 @@ func (e *Engine) mode(mode string) {
 func (e *Engine) demo() {
 	e.state.Status = "ready"
 	e.state.StatusText = "架空の会話 · デモ"
-	e.state.Account = Account{ID: "demo-self", Name: "自分"}
+	e.state.Account = Account{ID: "demo-self", Name: "自分", DemoFixture: true}
 	names := []string{"山田 太郎", "週末の集まり", "佐藤 花子", "家族", "鈴木 健"}
 	previews := []string{"駅前のカフェでどう？", "土曜日、楽しみにしてます！", "写真ありがとう！", "了解です", "また来週！"}
 	times := []string{"19:40", "19:32", "18:15", "17:08", "昨日"}
 	e.demoMessages = map[string][]Message{}
 	for i, name := range names {
 		id := "demo-" + string(rune('0'+i))
-		chat := Chat{ID: id, Name: name, Preview: previews[i], Time: times[i], Unread: 0, Group: i == 1 || i == 3, UpdatedAt: int64(5 - i)}
+		chat := Chat{DemoFixture: true, ID: id, Name: name, Preview: previews[i], Time: times[i], Unread: 0, Group: i == 1 || i == 3, UpdatedAt: int64(5 - i)}
 		if i == 1 {
 			chat.Unread = 2
 		}
 		e.state.Chats = append(e.state.Chats, chat)
 		if !chat.Group {
-			e.state.Contacts = append(e.state.Contacts, Contact{ID: id, Name: name})
-			e.known[id] = Contact{ID: id, Name: name}
+			e.state.Contacts = append(e.state.Contacts, Contact{DemoFixture: true, ID: id, Name: name})
+			e.known[id] = Contact{DemoFixture: true, ID: id, Name: name}
 		}
 		if i > 0 {
-			e.demoMessages[id] = []Message{{ID: strconv.Itoa(201 + i), Text: previews[i], Sender: name, SenderID: id, Time: times[i], Day: "今日", Timestamp: 1, Status: "ok"}}
+			e.demoMessages[id] = []Message{{DemoFixture: true, ID: strconv.Itoa(201 + i), Text: previews[i], Sender: name, SenderID: id, Time: times[i], Day: "今日", Timestamp: 1, Status: "ok"}}
 		}
 	}
-	e.state.Contacts = append(e.state.Contacts, Contact{ID: "demo-new", Name: "高橋 葵"}, Contact{ID: "demo-new-2", Name: "田中 直人"})
-	e.known["demo-new"] = Contact{ID: "demo-new", Name: "高橋 葵"}
-	e.known["demo-new-2"] = Contact{ID: "demo-new-2", Name: "田中 直人"}
+	e.state.Contacts = append(e.state.Contacts, Contact{DemoFixture: true, ID: "demo-new", Name: "高橋 葵"}, Contact{DemoFixture: true, ID: "demo-new-2", Name: "田中 直人"})
+	e.known["demo-new"] = Contact{DemoFixture: true, ID: "demo-new", Name: "高橋 葵"}
+	e.known["demo-new-2"] = Contact{DemoFixture: true, ID: "demo-new-2", Name: "田中 直人"}
 	texts := []string{"明日の待ち合わせ、何時にする？", "19時くらいでどうかな？", "いいね！", "駅前のカフェでどう？", "そこにしよう！"}
 	rows := []Message{}
 	for i, text := range texts {
@@ -515,7 +536,7 @@ func (e *Engine) demo() {
 		if own {
 			sender, id = "自分", "demo-self"
 		}
-		rows = append(rows, Message{ID: strconv.Itoa(101 + i), Text: text, Own: own, Sender: sender, SenderID: id, Time: []string{"19:35", "19:36", "19:38", "19:40", "19:41"}[i], Day: "今日", Timestamp: int64(i), Status: "ok", Reactions: []Reaction{}})
+		rows = append(rows, Message{DemoFixture: true, ID: strconv.Itoa(101 + i), Text: text, Own: own, Sender: sender, SenderID: id, Time: []string{"19:35", "19:36", "19:38", "19:40", "19:41"}[i], Day: "今日", Timestamp: int64(i), Status: "ok", Reactions: []Reaction{}})
 	}
 	rows[2].ContentType = 7
 	rows[2].Encrypted = boolPtr(false)
@@ -615,9 +636,10 @@ func (e *Engine) send(c Command) {
 		}
 		e.state.SendStatus = "idle"
 		now := time.Now()
-		item := Message{ID: result.ID, Text: draft, Own: true, SenderID: e.state.Account.ID, Sender: e.state.Account.Name, Timestamp: now.UnixMilli(), Time: now.Format("15:04"), Day: now.Format("2006/01/02"), Status: "ok", ReplyTo: reply.ID, ContentType: 0}
+		item := Message{SenderUnavailable: e.state.Account.NameUnavailable || e.state.Account.DemoFixture, ID: result.ID, Text: draft, Own: true, SenderID: e.state.Account.ID, Sender: e.state.Account.Name, Timestamp: now.UnixMilli(), Time: now.Format("15:04"), Day: now.Format("2006/01/02"), Status: "ok", ReplyTo: reply.ID, ContentType: 0}
 		if attachment != nil {
 			item.Text = "［ファイル：" + attachment.Name + "］"
+			item.GeneratedText = true
 			item.FileName = attachment.Name
 			item.ContentType = 14
 			item.Downloadable = true
@@ -663,7 +685,7 @@ func (e *Engine) startChat(c Command) {
 	if len(e.state.Chats) >= 500 || len(e.local) >= 50 {
 		return
 	}
-	chat := Chat{ID: contact.ID, Name: contact.Name, Preview: "まだメッセージはありません"}
+	chat := Chat{ID: contact.ID, Name: contact.Name, NameUnavailable: contact.NameUnavailable, DemoFixture: contact.DemoFixture, Preview: "まだメッセージはありません", PreviewKey: "まだメッセージはありません"}
 	e.local[chat.ID] = chat
 	e.state.Chats = append(e.state.Chats, chat)
 	e.selectChat(chat.ID)

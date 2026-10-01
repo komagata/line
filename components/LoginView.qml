@@ -1,8 +1,11 @@
 import QtQuick
+import 'Locale.js' as Locale
 import QtQuick.Layouts
 
 Item {
     id: root
+    readonly property string language: service && service.language === 'en' ? 'en' : 'ja'
+    function tr(value) { return Locale.text(language,value) }
     property var service: null
     readonly property var login: service && service.view.login ? service.view.login : ({stage:'idle',image:'',pin:'',statusText:'',active:false})
     LinePalette {id:ink}
@@ -18,13 +21,13 @@ Item {
                 // Locally generated PNG only; never a file/remote URL.
                 source:typeof root.login.image==='string' && root.login.image.length<=87406 && /^data:image\/png;base64,[A-Za-z0-9+/]+={0,2}$/.test(root.login.image) ? root.login.image : ''
                 cache:false;smooth:false;fillMode:Image.PreserveAspectFit
-                Accessible.name:'スマートフォンのLINEで読み取るログイン用QRコード'
+                Accessible.name:root.tr('スマートフォンのLINEで読み取るログイン用QRコード')
             }
         }
         ColumnLayout {
             Layout.fillWidth:true;Layout.alignment:Qt.AlignVCenter;spacing:18
             Text {
-                Layout.fillWidth:true;text:root.login.stage==='replace-confirmation'?'保存済みセッションの確認':'QRコードでログイン'
+                Layout.fillWidth:true;text:root.login.stage==='replace-confirmation'?root.tr('保存済みセッションの確認'):root.tr('QRコードでログイン')
                 textFormat:Text.PlainText;wrapMode:Text.Wrap;color:ink.foreground;font.family:ink.family;font.pixelSize:22
             }
             Text {
@@ -39,20 +42,20 @@ Item {
             }
             Text {
                 Layout.fillWidth:true;visible:root.login.stage==='phone' && !!root.login.pin
-                text:'この番号をスマートフォンのLINEに入力してください'
+                text:root.tr('この番号をスマートフォンのLINEに入力してください')
                 textFormat:Text.PlainText;wrapMode:Text.Wrap;color:ink.muted;font.family:ink.family;font.pixelSize:13
             }
             Text {
                 Layout.fillWidth:true;visible:root.login.stage==='replace-confirmation'
-                text:'続けると、LINEのChrome版や同じ方式のクライアントがログアウトする場合があります。'
+                text:root.tr('続けると、LINEのChrome版や同じ方式のクライアントがログアウトする場合があります。')
                 textFormat:Text.PlainText;wrapMode:Text.Wrap;color:ink.muted;font.family:ink.family;font.pixelSize:13
             }
             Flow {
                 Layout.fillWidth:true;spacing:8
-                ActionButton {objectName:'loginCancel';visible:root.login.canCancel===true;text:'キャンセル';onClicked:root.service.cancelLogin()}
-                ActionButton {objectName:'loginConfirm';visible:root.login.canConfirm===true;text:'置き換えて続ける';accent:true;onClicked:root.service.confirmLogin()}
-                ActionButton {objectName:'loginRetry';visible:root.login.canRetry===true;text:'QRコードを再作成';accent:true;onClicked:root.service.retryLogin()}
-                ActionButton {visible:root.login.stage==='uncertain' || root.login.stage==='success';enabled:!!root.service && !root.service.view.busy;text:'再読み込み';onClicked:root.service.refresh()}
+                ActionButton {objectName:'loginCancel';visible:root.login.canCancel===true;text:root.tr('キャンセル');onClicked:root.service.cancelLogin()}
+                ActionButton {objectName:'loginConfirm';visible:root.login.canConfirm===true;text:root.tr('置き換えて続ける');accent:true;onClicked:root.service.confirmLogin()}
+                ActionButton {objectName:'loginRetry';visible:root.login.canRetry===true;text:root.tr('QRコードを再作成');accent:true;onClicked:root.service.retryLogin()}
+                ActionButton {visible:root.login.stage==='uncertain' || root.login.stage==='success';enabled:!!root.service && !root.service.view.busy;text:root.tr('再読み込み');onClicked:root.service.refresh()}
             }
         }
     }

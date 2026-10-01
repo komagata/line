@@ -1,6 +1,7 @@
 package gui
 
 import (
+	"context"
 	"regexp"
 	"time"
 )
@@ -77,6 +78,10 @@ func (e *Engine) notice(m Message, chat string) {
 		}
 		e.lastNotice = time.Now()
 		notify := e.ops.Notify
+		locale := e.locale
+		if e.ops.NotifyLocalized != nil {
+			notify = func(ctx context.Context) bool { return e.ops.NotifyLocalized(ctx, locale) }
+		}
 		if notify == nil {
 			e.state.NotificationNote = "通知を表示できません。notify-send の導入を確認してください"
 			e.publish()
@@ -151,6 +156,9 @@ func (e *Engine) watchEvent(event WatchEvent) {
 		if e.state.Chats[i].ID == event.ChatID {
 			found = true
 			e.state.Chats[i].Preview = label(m.Text, 100)
+			copy := m
+			e.state.Chats[i].PreviewMessage = &copy
+			e.state.Chats[i].PreviewKey = ""
 			e.state.Chats[i].Time = m.Time
 			e.state.Chats[i].UpdatedAt = m.Timestamp
 			if !m.Own {

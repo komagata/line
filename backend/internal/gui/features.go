@@ -64,7 +64,8 @@ func (e *Engine) feature(c Command) {
 		if len(e.replies) >= 50 && e.replies[c.ID].ID == "" {
 			return
 		}
-		r := Reply{ID: target.ID, Text: target.Text, Sender: target.Sender}
+		source := *target
+		r := Reply{ID: target.ID, Text: target.Text, Sender: target.Sender, Source: &source}
 		if len(r.Text) > 160 {
 			r.Text = r.Text[:160]
 		}

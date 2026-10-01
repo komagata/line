@@ -1,8 +1,36 @@
 import QtQuick
+import QtCore
+import 'components/Locale.js' as Locale
 import Quickshell.Io
 
 Item {
     id: root
+    property url settingsLocation: StandardPaths.writableLocation(StandardPaths.ConfigLocation) + "/omarchy-line/preferences.ini"
+    property string systemLocale: Qt.locale().name
+    readonly property string savedLanguage: preferences.language
+    readonly property string language: Locale.resolveLanguage(savedLanguage, systemLocale)
+    Settings {
+        id: preferences
+        location: root.settingsLocation
+        property string language: ''
+    }
+    property string localStatusKey: '準備しています…'
+    function setLocalStatus(value) {localStatusKey=value;var next=Object.assign({},view);next.statusText=tr(value);view=next}
+    function setLanguage(value) {
+        if(value !== '' && value !== 'ja' && value !== 'en') return
+        preferences.language=value;preferences.sync()
+    }
+    onLanguageChanged: {
+        if (!view) return
+        if(localStatusKey) setLocalStatus(localStatusKey)
+        if(view.account && view.account.nameUnavailable) {
+            var next=Object.assign({},view)
+            next.account=Object.assign({},view.account,{name:tr('自分')})
+            view=next
+        }
+        command({action:'locale',text:language})
+    }
+    function tr(value) { return Locale.text(language,value) }
     property var shell: null
     property var manifest: null
     property bool alive: true
@@ -21,7 +49,7 @@ Item {
     property string editedSession: ''
     property int editedSelection: -1
     property string editedText: ''
-    property var view: ({mode:'live',session:'',selection:0,status:'idle',statusText:'準備しています…',avatars:{},chats:[],messages:[],selectedId:'',draft:'',account:{name:'自分'},sendStatus:'idle',historyStatus:'idle',busy:false})
+    property var view: ({mode:'live',session:'',selection:0,status:'idle',statusText:root.tr('準備しています…'),avatars:{},chats:[],messages:[],selectedId:'',draft:'',account:{name:root.tr('自分'),nameUnavailable:true},sendStatus:'idle',historyStatus:'idle',busy:false})
     readonly property int unread: (view.chats || []).reduce((n,c)=>n+(c.unread||0),0)
     function safeAvatars(value, mode) {
         if (!value || typeof value!=='object' || Array.isArray(value)) return {}
@@ -82,7 +110,7 @@ Item {
         cancelLogin()
         if(mode!==view.mode) clearAvatars()
         intendedMode=mode;modePending=true;editedChat='';editedText=''
-        command({action:'mode',mode:mode})
+        command({action:'mode',mode:mode,locale:language})
     }
     function login() {
         if(!started || loginRequested || (view.login && view.login.active)) return
@@ -131,17 +159,17 @@ Item {
                 next.preview=typeof next.preview==='string' && next.preview.length<=2796227 && /^data:image\/(png|jpeg);base64,[A-Za-z0-9+/]+={0,2}$/.test(next.preview) && (next.preview.indexOf('data:image/png;base64,iVBORw0KGgo')===0 || next.preview.indexOf('data:image/jpeg;base64,/9j/')===0) ? next.preview : ''
                 next.avatars=loginRequested || (next.login && next.login.active) ? {} : safeAvatars(next.avatars,next.mode)
                 next.stickerImages=loginRequested || (next.login && next.login.active) ? {} : safeStickers(next.stickerImages)
-                view=next
+                localStatusKey='';view=next
                 modePending=false
                 if(refreshPending && started) { refreshPending=false;command({action:'refresh'}) }
             } catch(error) {protocolError();return}
         }
     }
-    function protocolError() { clearAvatars();loginHidden=true;loginRequested=false;clearLogin();bridge.running=false;started=false;buffer='';var next=Object.assign({},view);next.session='';next.status='error';next.statusText='応答を読み取れませんでした。再読み込みしてください';next.sendStatus='idle';view=next }
+    function protocolError() { clearAvatars();loginHidden=true;loginRequested=false;clearLogin();bridge.running=false;started=false;buffer='';var next=Object.assign({},view);next.session='';next.status='error';localStatusKey='応答を読み取れませんでした。再読み込みしてください';next.statusText=root.tr(localStatusKey);next.sendStatus='idle';view=next }
     Timer {
         objectName:'startupTimeout'
         interval:4000;running:root.startupPending
-        onTriggered:if(!root.started){root.startupPending=false;root.protocolError();var next=Object.assign({},root.view);next.statusText='LINE バックエンドを起動できません。プラグインの bin/line-gui を確認して再読み込みしてください';root.view=next}
+        onTriggered:if(!root.started){root.startupPending=false;root.protocolError();var next=Object.assign({},root.view);root.localStatusKey='LINE バックエンドを起動できません。プラグインの bin/line-gui を確認して再読み込みしてください';next.statusText=root.tr(root.localStatusKey);root.view=next}
     }
     Process {
         id:bridge
@@ -150,8 +178,8 @@ Item {
         running:true
         stdout:SplitParser { splitMarker:'';onRead:data=>root.consume(data) }
         stderr:SplitParser { splitMarker:'';onRead:data=>{} }
-        onStarted:{root.started=true;root.startupPending=false;root.modePending=true;root.command({action:'mode',mode:root.intendedMode})}
-        onExited:{root.started=false;if(root.alive){root.clearAvatars();root.loginHidden=true;root.loginRequested=false;root.clearLogin();var next=Object.assign({},root.view);next.session='';next.status='error';next.statusText='LINEサービスが停止しました。プラグインの bin/line-gui を確認して再読み込みしてください';next.sendStatus='idle';next.watching=false;root.view=next}}
+        onStarted:{root.started=true;root.startupPending=false;root.modePending=true;root.command({action:'mode',mode:root.intendedMode,locale:root.language})}
+        onExited:{root.started=false;if(root.alive){root.clearAvatars();root.loginHidden=true;root.loginRequested=false;root.clearLogin();var next=Object.assign({},root.view);next.session='';next.status='error';root.localStatusKey='LINEサービスが停止しました。プラグインの bin/line-gui を確認して再読み込みしてください';next.statusText=root.tr(root.localStatusKey);next.sendStatus='idle';next.watching=false;root.view=next}}
     }
     Component.onDestruction:{alive=false;bridge.running=false;buffer='';clearLogin();clearAvatars()}
     IpcHandler {

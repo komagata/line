@@ -5,7 +5,7 @@
   "version": "0.1.0",
   "author": "komagata",
   "license": "MIT",
-  "description": "LINEのチャット・添付・返信を使うネイティブプラグイン",
+  "description": "Native LINE plugin for chats, attachments, replies, and stickers",
   "kinds": [
     "bar-widget",
     "panel",
@@ -18,7 +18,7 @@
   },
   "barWidget": {
     "displayName": "LINE for Omarchy",
-    "description": "LINEのチャット・添付・返信を使うネイティブプラグイン",
+    "description": "Native LINE plugin for chats, attachments, replies, and stickers",
     "category": "Other",
     "allowMultiple": false,
     "defaultSection": "right",

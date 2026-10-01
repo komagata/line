@@ -245,7 +245,7 @@ func (e *Engine) sendSticker(c Command) {
 			e.state.Stickers.Selected = nil
 		}
 		now := time.Now()
-		e.sentMessage(c.ID, Message{ID: result.ID, Text: "［スタンプ］ " + s.Alt, ContentType: 7, Sticker: s, Own: true, Sender: e.state.Account.Name, SenderID: e.state.Account.ID, Timestamp: now.UnixMilli(), Time: now.Format("15:04"), Day: now.Format("2006/01/02"), Status: "ok", ReplyTo: reply.ID})
+		e.sentMessage(c.ID, Message{SenderUnavailable: e.state.Account.NameUnavailable || e.state.Account.DemoFixture, GeneratedText: true, ID: result.ID, Text: "［スタンプ］ " + s.Alt, ContentType: 7, Sticker: s, Own: true, Sender: e.state.Account.Name, SenderID: e.state.Account.ID, Timestamp: now.UnixMilli(), Time: now.Format("15:04"), Day: now.Format("2006/01/02"), Status: "ok", ReplyTo: reply.ID})
 		delete(e.replies, c.ID)
 		if e.state.SelectedID == c.ID {
 			e.state.Reply = nil

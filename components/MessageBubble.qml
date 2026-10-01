@@ -1,8 +1,11 @@
 import QtQuick
+import 'Locale.js' as Locale
 import 'MessageLinks.js' as MessageLinks
 
 Item {
     id: root
+    property string language: 'ja'
+    function tr(value) { return Locale.text(language,value) }
     property var message: ({})
     property string imageData: ''
     property string stickerImage: ''
@@ -16,11 +19,11 @@ Item {
     }
     LinePalette { id: ink }
     implicitHeight: bubble.height + 22
-    Avatar {
+    Avatar { language:root.language;
         id: avatar; objectName:'messageAvatar-'+(root.message.id || '')
         visible: !root.message.own
         anchors.left: parent.left; anchors.top: bubble.top
-        width: 32; name: root.message.sender || '送信者不明'; imageData:root.imageData
+        width: 32; name: root.message.sender || root.tr('送信者不明'); imageData:root.imageData
     }
     Rectangle {
         id: bubble
@@ -37,7 +40,7 @@ Item {
                 id:stickerPoster;objectName:'receivedSticker-'+(root.message.id||'');width:Math.min(root.width<600?144:200,parent.width);height:visible?width:0;visible:!!root.message.sticker;imageData:root.stickerImage
                 anchors.horizontalCenter:parent.horizontalCenter
             }
-            Text {objectName:'stickerFallback-'+(root.message.id||'');width:parent.width;visible:!!root.message.sticker && stickerPoster.status!==Image.Ready;text:'スタンプ画像を表示できません（読み込み中または未対応）';textFormat:Text.PlainText;wrapMode:Text.Wrap;color:ink.muted;font.pixelSize:12}
+            Text {objectName:'stickerFallback-'+(root.message.id||'');width:parent.width;visible:!!root.message.sticker && stickerPoster.status!==Image.Ready;text:root.tr('スタンプ画像を表示できません（読み込み中または未対応）');textFormat:Text.PlainText;wrapMode:Text.Wrap;color:ink.muted;font.pixelSize:12}
             TextEdit {
                 id:body;objectName:'messageText-'+(root.message.id||'')
                 width:parent.width;readOnly:true;selectByMouse:true;activeFocusOnTab:true
@@ -58,17 +61,17 @@ Item {
                     }
                 }
                 HoverHandler { cursorShape:body.hoveredLink ? Qt.PointingHandCursor : Qt.IBeamCursor }
-                Accessible.description:'リンク上でクリック、またはカーソルを合わせて Ctrl+Enter でブラウザを開く'
+                Accessible.description:root.tr('リンク上でクリック、またはカーソルを合わせて Ctrl+Enter でブラウザを開く')
             }
             Text {
                 width:parent.width;visible:text!==''
-                text:(root.message.reactions||[]).map(r=>({'like':'👍','love':'♥','laugh':'😆','surprise':'😮','sad':'😢','angry':'😡'}[r.name]||'')+' '+r.count+(r.own?' 自分':'')).join('  ')
+                text:(root.message.reactions||[]).map(r=>({'like':'👍','love':'♥','laugh':'😆','surprise':'😮','sad':'😢','angry':'😡'}[r.name]||'')+' '+r.count+(r.own?root.tr(' 自分'):'')).join('  ')
                 textFormat:Text.PlainText;wrapMode:Text.Wrap;color:ink.foreground;font.pixelSize:12
             }
             Item {
                 width:parent.width;height:26
                 Text {anchors.left:parent.left;anchors.verticalCenter:parent.verticalCenter;text:root.message.time||'';textFormat:Text.PlainText;color:ink.muted;font.pixelSize:11}
-                ActionButton {objectName:'messageActions-'+(root.message.id||'');anchors.right:parent.right;height:26;implicitWidth:44;text:'⋯';hint:'返信・コピー・リアクション';onClicked:root.actionsRequested()}
+                ActionButton {objectName:'messageActions-'+(root.message.id||'');anchors.right:parent.right;height:26;implicitWidth:44;text:'⋯';hint:root.tr('返信・コピー・リアクション');onClicked:root.actionsRequested()}
             }
         }
     }

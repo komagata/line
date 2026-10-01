@@ -80,6 +80,8 @@ func (e *Engine) refresh(resync bool) {
 			for _, old := range e.state.Chats {
 				if old.ID == snapshot.Chats[i].ID {
 					snapshot.Chats[i].Preview = old.Preview
+					snapshot.Chats[i].PreviewMessage = old.PreviewMessage
+					snapshot.Chats[i].PreviewKey = old.PreviewKey
 					if old.UpdatedAt > snapshot.Chats[i].UpdatedAt {
 						snapshot.Chats[i].UpdatedAt = old.UpdatedAt
 						snapshot.Chats[i].Time = old.Time
@@ -188,7 +190,7 @@ func (e *Engine) startLogin(c Command) {
 	e.resetIdentity()
 	e.state.Chats = []Chat{}
 	e.state.Contacts = []Contact{}
-	e.state.Account = Account{Name: "自分"}
+	e.state.Account = Account{Name: "自分", NameUnavailable: true}
 	e.state.Busy = true
 	attempt := token()
 	request := ""

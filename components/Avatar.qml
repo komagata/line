@@ -1,7 +1,10 @@
 import QtQuick
+import 'Locale.js' as Locale
 
 Rectangle {
     id: root
+    property string language: 'ja'
+    function tr(value) { return Locale.text(language,value) }
     property string name: ''
     property bool group: false
     property bool self: false
@@ -67,7 +70,7 @@ Rectangle {
         objectName:'avatarInitial'
         anchors.centerIn: parent
         visible: !root.imageReady
-        text: root.group ? '󰡉' : root.self ? '自' : root.name.trim().slice(0,1)
+        text: root.group ? '󰡉' : root.self ? root.tr('自') : root.name.trim().slice(0,1)
         textFormat: Text.PlainText
         color: '#35413e'
         font.family: root.group ? 'Symbols Nerd Font' : 'sans-serif'

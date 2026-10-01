@@ -16,6 +16,10 @@ python3 scripts/validate_manifest.py .
   go vet -mod=readonly ./internal/... ./cmd/... ./pkg/line ./pkg/e2ee ./pkg
 )
 python3 -B tests/test_message_links.py
+qml_home=$(mktemp -d /tmp/omarchy-line-qml.XXXXXX)
+trap 'rm -rf -- "$qml_home"' EXIT
+mkdir -p "$qml_home/config" "$qml_home/data" "$qml_home/cache"
+HOME="$qml_home" XDG_CONFIG_HOME="$qml_home/config" XDG_DATA_HOME="$qml_home/data" XDG_CACHE_HOME="$qml_home/cache" \
 QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software \
   QT_QUICK_CONTROLS_STYLE=Basic QT_QPA_PLATFORMTHEME=generic \
   qmltestrunner -input tests/qml -import tests/qml/imports -o -,txt

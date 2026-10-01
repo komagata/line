@@ -25,6 +25,9 @@ func (e *Engine) sentMessage(chat string, item Message) {
 		c := &e.state.Chats[i]
 		if c.ID == chat && c.UpdatedAt <= item.Timestamp {
 			c.Preview, c.Time, c.UpdatedAt = label(item.Text, 100), item.Time, item.Timestamp
+			copy := item
+			c.PreviewMessage = &copy
+			c.PreviewKey = ""
 		}
 	}
 }

@@ -43,11 +43,21 @@ There are no runtime downloads or builds, and Node, Python, qrencode, and an ext
 
 Search for LINE in the app launcher or open it from the LINE icon in the bar, then reload or sign in with a QR code in Settings. Press Enter to send and Shift+Enter for a line break. Chats are limited to 500 items, and history to the most recent 100. Conversations and drafts are held in memory and are cleared when the service stops. If the result of a send is unknown, the message is not automatically resent.
 
+By default, the UI follows the system Qt locale: Japanese locales use Japanese; English, unsupported, empty, and C/POSIX locales use English. Choose **日本語** or **English** in Settings to save an explicit override, or **System default / システム設定** to return to automatic detection. Invalid saved preferences also fall back to system detection. Automatic detection is not saved as an explicit override. Changes apply immediately and keep the current conversation, draft, and login state. The language preference is saved in `${XDG_CONFIG_HOME:-$HOME/.config}/omarchy-line/preferences.ini`, separately from the plugin and authentication. Removing or updating the plugin keeps this preference; delete that file to reset the language. Other settings, including notifications, remain session-only.
+
 With the local Go version, chats, icons, owned stickers, and the incoming connection have been checked using a saved account. Repeating a real QR login, sending real messages, and delivery to recipients have not been verified.
 
-![Screenshot of the running app showing a fictional conversation (captured before the demo entry point was removed).](preview.png)
+![English UI with a fictional demo conversation.](preview.png)
 
-The names, conversation, and icons in the image are fictional. The regular UI has no button for switching to the demo.
+The names, conversation, and icons in the English demo screenshot are fictional. The regular UI has no button for switching to the demo.
+
+To prepare screenshots from the actual ChatView without signing in or changing the running shell:
+
+```bash
+./scripts/capture-preview /tmp/omarchy-line-english-preview
+```
+
+This requires the build prerequisites and `qmltestrunner`. It derives fixtures from the Go demo, selects English through Settings, and saves chat and Settings PNGs at 1200×760 and 720×540. The offscreen QtTest harness uses isolated HOME/XDG paths and a stub backend process; it performs no live LINE operations and does not replace `preview.png`. Inspect the captures before publishing them.
 
 ## Updating and removal
 
