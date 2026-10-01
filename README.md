@@ -4,26 +4,14 @@ A work-in-progress QML and Go plugin for using LINE chats, replies, attachments,
 
 ## Installation
 
-The primary installation uses Omarchy's Git-managed plugin support. The repository does not need a marketplace listing. `--yes` accepts the trusted repository clone confirmation; adding the plugin leaves it disabled. Build the backend and copy its executable and license notice before enabling it:
+Install with Omarchy's Git-managed plugin support. A marketplace listing is not needed. Setup builds the backend, installs its executable and license notice, registers the app launcher, and enables the plugin:
 
 ```bash
-(set -e
-  omarchy plugin add https://github.com/komagata/line.git --yes
-  cd "$HOME/.config/omarchy/plugins/io.github.komagata.line"
-  (cd backend && GOTOOLCHAIN=local go mod download)
-  ./scripts/build
-  install -Dm755 build/plugin/bin/line-gui bin/line-gui
-  install -m644 build/plugin/NOTICE NOTICE
-  ./scripts/launcher install
-  omarchy plugin enable io.github.komagata.line
-)
+omarchy plugin add https://github.com/komagata/line.git --yes
+~/.config/omarchy/plugins/io.github.komagata.line/scripts/setup --in-place
 ```
 
-For the source-copy installation instead, prepare the prerequisites and run the existing setup flow:
-
-```bash
-git clone https://github.com/komagata/line.git && cd line && ./scripts/setup
-```
+`--yes` accepts the trusted repository clone confirmation; adding the plugin leaves it disabled. Prepare these requirements before running the commands:
 
 - Linux, Omarchy 4 Quattro / Quickshell, Qt Quick Controls and Dialogs
 - For fetching and building the source: git, Go 1.26 or later, Python 3
@@ -32,9 +20,20 @@ git clone https://github.com/komagata/line.git && cd line && ./scripts/setup
 
 On Arch Linux, the package names are `git`, `go`, `python`, and `libsecret`. setup does not install system packages.
 
-The primary Git-managed flow builds from the installed checkout because `omarchy plugin add` only clones, validates, and rescans; it does not build the backend. QML expects the executable at the plugin root as `bin/line-gui`. The plugin remains disabled until the final enable command. There is no build hook, and plugin updates do not build the backend.
+`omarchy plugin add` clones, validates, and rescans; it does not build the backend. `setup --in-place` checks prerequisites and the canonical installed Git checkout, disables it, downloads pinned Go modules, builds and validates the payload, and replaces only `bin/line-gui` and `NOTICE`. It preserves Git metadata and source files. Setup rescans, registers the launcher, then enables the plugin last. After disabling succeeds, any failure leaves the plugin disabled; fix the cause and rerun the same setup command. The two generated files are each replaced atomically; a replacement failure can leave one updated, so rerun setup before enabling. Setup does not install system packages, restart the shell, or sign you in.
 
-In the source-copy alternative, setup checks the prerequisites and destination, downloads pinned Go modules, and builds the plugin. It installs only the verified build artifact to `~/.config/omarchy/plugins/io.github.komagata.line`, then rescans and enables it and registers a searchable LINE entry in the app launcher. If the destination already exists or a plugin with the same ID is present, setup stops before building. It does not restart the shell or sign you in.
+<details>
+<summary>Alternative: source-copy installation</summary>
+
+Prepare the same prerequisites, then run:
+
+```bash
+git clone https://github.com/komagata/line.git && cd line && ./scripts/setup
+```
+
+Without `--in-place`, setup installs only the verified build artifact to `~/.config/omarchy/plugins/io.github.komagata.line`, rescans, registers the launcher, and enables it last. If the destination already exists or a plugin with the same ID is present, setup stops before building. This installation does not retain a Git checkout at the destination; use the source-copy update and rollback steps below.
+
+</details>
 
 The launcher uses the standard `internet-chat` themed icon and opens the plugin with `omarchy-shell shell summon io.github.komagata.line`. Its desktop entry is stored under `${XDG_DATA_HOME:-$HOME/.local/share}/applications/`. An unrelated file or symlink at that path is refused. If `update-desktop-database` is available, the helper refreshes it; a refresh failure is reported as a warning after the desktop entry change succeeds.
 
@@ -54,23 +53,17 @@ The names, conversation, and icons in the image are fictional. The regular UI ha
 
 ### Git-managed installation
 
-Update a Git-managed installation from its installed checkout. The plugin is disabled before fetching and rebuilding, and is enabled only after the binary and NOTICE are installed successfully:
+Disable the plugin before updating its installed checkout, then rebuild with setup:
 
 ```bash
 (set -e
-  cd "$HOME/.config/omarchy/plugins/io.github.komagata.line"
   omarchy plugin disable io.github.komagata.line
   omarchy plugin update io.github.komagata.line
-  (cd backend && GOTOOLCHAIN=local go mod download)
-  ./scripts/build
-  install -Dm755 build/plugin/bin/line-gui bin/line-gui
-  install -m644 build/plugin/NOTICE NOTICE
-  ./scripts/launcher install
-  omarchy plugin enable io.github.komagata.line
+  ~/.config/omarchy/plugins/io.github.komagata.line/scripts/setup --in-place
 )
 ```
 
-`omarchy plugin update` fetches and fast-forwards the checkout but does not build the backend. It may ask for permission to update the repository. If module download or build fails, the plugin remains disabled.
+`omarchy plugin update` fetches and fast-forwards the checkout but does not build the backend. It may ask for permission to update the repository. If updating or setup fails after disabling succeeds, the plugin remains disabled. Fix the cause and rerun the sequence. Setup can also rebuild the current checkout without updating it.
 
 ### Source-copy installation
 
@@ -103,7 +96,15 @@ omarchy-shell shell rescanPlugins
 omarchy plugin enable io.github.komagata.line
 ```
 
-If setup fails while rescanning, enabling, or registering the launcher after a source-copy installation, fix the cause and run the rescan, enable, and launcher install commands above. Running setup again will not replace existing files.
+If source-copy setup fails after installing files, the plugin has not been enabled by setup. Fix the cause, then run these commands from the cloned `line` directory; running setup again will not replace the existing installation:
+
+```bash
+(set -e
+  omarchy-shell shell rescanPlugins
+  ./scripts/launcher install
+  omarchy plugin enable io.github.komagata.line
+)
+```
 
 To remove a Git-managed installation, remove its launcher entry, disable it, then remove the plugin:
 
