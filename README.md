@@ -4,7 +4,22 @@ A work-in-progress QML and Go plugin for using LINE chats, replies, attachments,
 
 ## Installation
 
-After preparing the prerequisites, run:
+The primary installation uses Omarchy's Git-managed plugin support. The repository does not need a marketplace listing. `--yes` accepts the trusted repository clone confirmation; adding the plugin leaves it disabled. Build the backend and copy its executable and license notice before enabling it:
+
+```bash
+(set -e
+  omarchy plugin add https://github.com/komagata/line.git --yes
+  cd "$HOME/.config/omarchy/plugins/io.github.komagata.line"
+  (cd backend && GOTOOLCHAIN=local go mod download)
+  ./scripts/build
+  install -Dm755 build/plugin/bin/line-gui bin/line-gui
+  install -m644 build/plugin/NOTICE NOTICE
+  ./scripts/launcher install
+  omarchy plugin enable io.github.komagata.line
+)
+```
+
+For the source-copy installation instead, prepare the prerequisites and run the existing setup flow:
 
 ```bash
 git clone https://github.com/komagata/line.git && cd line && ./scripts/setup
@@ -17,11 +32,13 @@ git clone https://github.com/komagata/line.git && cd line && ./scripts/setup
 
 On Arch Linux, the package names are `git`, `go`, `python`, and `libsecret`. setup does not install system packages.
 
-setup checks the prerequisites and destination, downloads pinned Go modules, and builds the plugin. It installs only the verified build artifact to `~/.config/omarchy/plugins/io.github.komagata.line`, then rescans and enables it and registers a searchable LINE entry in the app launcher. If the destination already exists or a plugin with the same ID is present, setup stops before building. It does not restart the shell or sign you in.
+The primary Git-managed flow builds from the installed checkout because `omarchy plugin add` only clones, validates, and rescans; it does not build the backend. QML expects the executable at the plugin root as `bin/line-gui`. The plugin remains disabled until the final enable command. There is no build hook, and plugin updates do not build the backend.
+
+In the source-copy alternative, setup checks the prerequisites and destination, downloads pinned Go modules, and builds the plugin. It installs only the verified build artifact to `~/.config/omarchy/plugins/io.github.komagata.line`, then rescans and enables it and registers a searchable LINE entry in the app launcher. If the destination already exists or a plugin with the same ID is present, setup stops before building. It does not restart the shell or sign you in.
 
 The launcher uses the standard `internet-chat` themed icon and opens the plugin with `omarchy-shell shell summon io.github.komagata.line`. Its desktop entry is stored under `${XDG_DATA_HOME:-$HOME/.local/share}/applications/`. An unrelated file or symlink at that path is refused. If `update-desktop-database` is available, the helper refreshes it; a refresh failure is reported as a warning after the desktop entry change succeeds.
 
-Cloning the source alone does not create `bin/line-gui`, so the standard `omarchy plugin add` command cannot install it. There are no runtime downloads or builds, and Node, Python, qrencode, and an external `line` CLI are not needed.
+There are no runtime downloads or builds, and Node, Python, qrencode, and an external `line` CLI are not needed.
 
 ## Usage
 
@@ -35,7 +52,29 @@ The names, conversation, and icons in the image are fictional. The regular UI ha
 
 ## Updating and removal
 
-The installed plugin is a built copy. Update it from the cloned `line` directory; do not use the update operation intended for Git-managed plugins.
+### Git-managed installation
+
+Update a Git-managed installation from its installed checkout. The plugin is disabled before fetching and rebuilding, and is enabled only after the binary and NOTICE are installed successfully:
+
+```bash
+(set -e
+  cd "$HOME/.config/omarchy/plugins/io.github.komagata.line"
+  omarchy plugin disable io.github.komagata.line
+  omarchy plugin update io.github.komagata.line
+  (cd backend && GOTOOLCHAIN=local go mod download)
+  ./scripts/build
+  install -Dm755 build/plugin/bin/line-gui bin/line-gui
+  install -m644 build/plugin/NOTICE NOTICE
+  ./scripts/launcher install
+  omarchy plugin enable io.github.komagata.line
+)
+```
+
+`omarchy plugin update` fetches and fast-forwards the checkout but does not build the backend. It may ask for permission to update the repository. If module download or build fails, the plugin remains disabled.
+
+### Source-copy installation
+
+For the source-copy alternative, update it from the cloned `line` source directory; do not use the update operation intended for Git-managed plugins.
 
 ```bash
 git pull --ff-only
@@ -48,7 +87,7 @@ omarchy plugin enable io.github.komagata.line
 ./scripts/launcher install
 ```
 
-For an existing installation, register or refresh the app launcher from the cloned `line` directory without rebuilding:
+For a source-copy installation, register or refresh the app launcher from the cloned `line` directory without rebuilding:
 
 ```bash
 ./scripts/launcher install
@@ -64,15 +103,20 @@ omarchy-shell shell rescanPlugins
 omarchy plugin enable io.github.komagata.line
 ```
 
-If setup fails while rescanning, enabling, or registering the launcher after installation, fix the cause and run the rescan, enable, and launcher install commands above. Running setup again will not replace existing files.
+If setup fails while rescanning, enabling, or registering the launcher after a source-copy installation, fix the cause and run the rescan, enable, and launcher install commands above. Running setup again will not replace existing files.
 
-To remove the plugin, run:
+To remove a Git-managed installation, remove its launcher entry, disable it, then remove the plugin:
 
 ```bash
-./scripts/launcher remove
-omarchy plugin disable io.github.komagata.line
-omarchy plugin remove io.github.komagata.line
+(set -e
+  cd "$HOME/.config/omarchy/plugins/io.github.komagata.line"
+  ./scripts/launcher remove
+  omarchy plugin disable io.github.komagata.line
+  omarchy plugin remove io.github.komagata.line
+)
 ```
+
+For a source-copy installation, run `./scripts/launcher remove` from the cloned `line` directory, then disable and remove the installed plugin as above.
 
 Authentication data, the old CLI, and backups are left in place. Review the backup contents before deleting them manually.
 

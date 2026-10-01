@@ -4,6 +4,8 @@ __pycache__/
 test-results/
 
 /build/
+/bin/line-gui
+/NOTICE
 # Packaging stages are development output only.
 .plugin-stage-*/
 
